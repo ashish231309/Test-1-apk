@@ -6,6 +6,6 @@ import com.ashishkumar.nivara.di.NivaraContainer
 
 class NivaraApplication : Application() {
     val container: NivaraContainer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        DefaultNivaraContainer()
+        DefaultNivaraContainer(applicationContext)
     }
 }

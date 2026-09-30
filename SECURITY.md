@@ -1,6 +1,6 @@
 # Security foundation notes
 
-This document describes the Stage 2 primitives and their boundaries. It is not a claim that the complete application has undergone an external security audit.
+This document describes the Stage 2 cryptographic primitives and Stage 3 credential enrollment/verification boundaries. It is not a claim that the complete application has undergone an external security audit.
 
 ## Cryptographic formats and APIs
 
@@ -10,13 +10,23 @@ This document describes the Stage 2 primitives and their boundaries. It is not a
 - Wrapped keys have a separate `NVKW` versioned container, which identifies credential-derived, recovery, or AndroidKeyStore protection. The protection type, purpose and binding are also bound into the inner GCM authentication. The intended design is a random 256-bit content key protected by independent wrapping keys; no user credential is treated as a vault/content key.
 - Credential derivation is PBKDF2-HMAC-SHA-256, parameter version 1, 600,000 iterations, a unique 16-byte generated salt, and 32-byte output. The suspend API performs derivation on `Dispatchers.Default`. Callers own returned derived bytes and must clear them when no longer needed; only non-secret KDF parameters and salt should be retained for later derivation.
 
+## Credential enrollment and verification
+
+- A single Preferences DataStore record is active at a time. It is stored under `noBackupFilesDir` and contains the selected method, credential-record/KDF versions, PBKDF2 parameters, salt, base64-encoded authenticated wrapped-verifier envelope, and only the minimum failed-attempt count/throttle deadline. There is no credential removal/reset API.
+- Enrollment derives with the Stage 2 `CredentialKeyDeriver`, wraps a freshly generated 32-byte random verifier under the derived AES-256 key using the Stage 2 key-wrapping/AES-GCM services, and stores only that ciphertext envelope. Verification succeeds only when the GCM authentication tag validates; the unwrapped verifier is never returned to UI and is cleared. Credential-type ID is bound into the authenticated context. This creates an offline-guessing target if the private DataStore file is extracted; PBKDF2 slows guesses but cannot add entropy to a short PIN.
+- PINs are 6–12 ASCII digits and the enrollment rules reject repeating groups up to three digits and simple ascending/descending sequences. Passwords are 10–128 characters with no arbitrary composition requirement; empty/whitespace-only and control-containing values are rejected. Pattern canonical form is lowercase ASCII hex of `[format-version=1, point-count, ordered zero-based 3x3 cell IDs]`; skipped midpoint cells on straight segments are inserted before KDF input so drawing the same path normalizes consistently. The canonical form and all raw inputs remain transient.
+- Failed attempts are persisted without credential history. The fourth consecutive failure starts exponential temporary delays (1, 2, 4, 8, 16, then capped at 30 seconds); successful verification or credential replacement resets the count. There is no permanent lockout. This is a local throttling foundation, not a hardware-enforced boundary: copied/modified local storage can reset or roll back the count, and offline guessing is unaffected. The persisted deadline uses wall time, so device clock changes can affect the temporary delay; later policy should consider stronger device-bound state if the threat model requires it.
+- Credential screens use password transformation/password semantics, a secure-window flag, non-saveable Compose state, and clear drafts after submission/navigation. The app does not access the clipboard or log/save the values; platform text-edit context-menu and IME behavior is not claimed to be fully suppressed. Compose text inputs necessarily hold transient `String` values internally, and JVM/provider memory copies prevent guaranteed erasure as described below.
+
 ## Key and secret handling
 
 - AndroidKeyStore aliases are namespaced and validated. Keys are AES-256, GCM-only, no-padding, encrypt/decrypt keys with randomized encryption enabled. Key bytes are not exported. Hardware-backed storage depends on the device/provider and is not guaranteed by this implementation.
-- Content and recovery key material is generated with JCA `SecureRandom`; no raw recovery key, credential, derived key, or content key is persisted by this stage. There is no database or preference storage for security state.
+- Stage 3 creates only a fresh random verifier for credential checking; it creates no vault/content key or recovery key. The Preferences DataStore stores only the credential metadata, wrapped verifier and attempt state described above—not raw credentials, derived keys, plaintext verifier bytes, vault keys, or recovery keys.
 - Mutable temporary buffers under application control are cleared where practical. JVM providers, `SecretKeySpec`, `Cipher`, JIT compilation, garbage collection, and platform internals may make additional copies that cannot be reliably overwritten. Therefore this implementation does not claim perfect memory erasure. Avoid converting secrets to `String`, keep their lifetime short, and clear caller-owned password/key arrays after use.
 - Security exceptions expose stable generic messages and intentionally omit provider exceptions and sensitive values. Security code does not log key, password, PIN, derived-key, or recovery material.
 
-## Scope and follow-up
+## Stage 3 boundary and later integration contract
 
-No credential enrollment, vault persistence, recovery flow, or UI is included. A future credential stage must version/persist only the KDF salt and parameters alongside a protected key envelope, run derivation away from the main thread, and clear temporary credential/derived arrays. Persistence and migration policy must be designed before storing those envelopes.
+- This stage provides enrollment, verification, and replacement for exactly one active PIN, password, or pattern. Authentication results are typed and ephemeral; there is no session manager, app-lock policy, biometric flow, recovery/reset path, or vault/file persistence.
+- Changing the primary credential requires successful verification of the old value and atomically replaces the one stored credential record. It does not rewrap vault keys: no vault key exists in this stage. A future vault must use a random content key (never the PIN/password/pattern or its derived key as the content key); integrating credential changes must explicitly decide how that independent key is protected and atomically rewrapped/migrated before claiming vault continuity.
+- No recovery key or fixed/master credential is created. If recovery is designed later, its threat model, key lifecycle, enrollment UX, and migration semantics must be specified separately; it must not become a silent bypass for primary authentication.

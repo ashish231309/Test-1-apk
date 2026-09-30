@@ -1,12 +1,13 @@
 # Nivara
 
-Nivara is a native Android application intended to provide a privacy and security workspace. The initial release establishes the app foundation; security features will be introduced incrementally in later releases.
+Nivara is a native Android application intended to provide a privacy and security workspace. The current foundation includes enrollment, verification, and authenticated replacement for one primary PIN, password, or pattern; vault, recovery, biometric, and app-lock features remain out of scope.
 
 ## Technology
 
 - Kotlin and native Android
 - Jetpack Compose with Material 3
-- AndroidX Navigation Compose
+- AndroidX Navigation Compose and Preferences DataStore
+- Kotlin Coroutines for off-main-thread key derivation
 - Gradle Kotlin DSL with a version catalog
 - Minimum Android version: Android 9 (API 28)
 
@@ -23,8 +24,8 @@ The debug APK is written to `app/build/outputs/apk/debug/`. Run `./gradlew conne
 
 ## Security foundation
 
-Core cryptography, key-management boundaries, and the current envelope/KDF design are documented in [SECURITY.md](SECURITY.md). No credentials, vault content, or recovery state are persisted by the current app.
+Core cryptography, credential verification, persistence boundaries, and the current envelope/KDF design are documented in [SECURITY.md](SECURITY.md). The app persists one credential configuration and throttling counters, but never the PIN, password, pattern, or plaintext verifier; no recovery key is created in this scope.
 
 ## Project structure
 
-The single `app` module keeps the project lightweight. Compose UI, navigation, and theme live under `ui`; security contracts and value types are in `domain/security`; JCA and Android Keystore implementations are in `data/security`; and `di` wires them through the application container. UI code does not depend on Android security implementation classes.
+The single `app` module keeps the project lightweight. Compose UI, navigation, and theme live under `ui`; security and credential contracts are in `domain`; JCA, Android Keystore, and DataStore implementations are in `data`; and `di` wires them through the application container. UI code depends on domain service boundaries rather than platform security classes.

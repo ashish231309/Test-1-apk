@@ -11,7 +11,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             NivaraTheme {
-                NivaraApp()
+                NivaraApp((application as NivaraApplication).container.primaryCredentialService)
             }
         }
     }
