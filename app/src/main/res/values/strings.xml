@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Nivara</string>
+    <string name="home_welcome">Your privacy and security workspace starts here.</string>
+    <string name="retry">Try again</string>
+</resources>
