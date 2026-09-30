@@ -1,11 +1,15 @@
 package com.ashishkumar.nivara.di
 
 import android.content.Context
+import androidx.biometric.BiometricManager
 import androidx.datastore.core.DataStore
+import androidx.fragment.app.FragmentActivity
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import com.ashishkumar.nivara.data.credentials.DataStorePrimaryCredentialStore
 import com.ashishkumar.nivara.data.credentials.SystemCredentialClock
+import com.ashishkumar.nivara.data.biometrics.AndroidBiometricPromptPlatform
+import com.ashishkumar.nivara.data.biometrics.DataStoreBiometricStateStore
 import com.ashishkumar.nivara.data.security.AndroidKeyStoreKeyManager
 import com.ashishkumar.nivara.data.security.AesGcmKeyWrappingService
 import com.ashishkumar.nivara.data.security.JcaAesGcmEncryption
@@ -14,6 +18,9 @@ import com.ashishkumar.nivara.data.security.JcaSecureRandomSource
 import com.ashishkumar.nivara.domain.credentials.DefaultPrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialStore
+import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticator
+import com.ashishkumar.nivara.domain.biometrics.BiometricStateStore
+import com.ashishkumar.nivara.domain.biometrics.DefaultBiometricAuthenticator
 import com.ashishkumar.nivara.domain.security.AuthenticatedEncryption
 import com.ashishkumar.nivara.domain.security.CredentialKeyDeriver
 import com.ashishkumar.nivara.domain.security.DeviceKeyStore
@@ -33,6 +40,7 @@ interface NivaraContainer {
     val deviceKeyStore: DeviceKeyStore
     val credentialStore: PrimaryCredentialStore
     val primaryCredentialService: PrimaryCredentialService
+    fun biometricAuthenticator(activity: FragmentActivity): BiometricAuthenticator
 }
 
 class DefaultNivaraContainer(context: Context) : NivaraContainer {
@@ -43,6 +51,19 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
     override val keyWrapping: KeyWrappingService by lazy { AesGcmKeyWrappingService(encryption) }
     override val credentialKeyDeriver: CredentialKeyDeriver by lazy { JcaCredentialKeyDeriver(secureRandom) }
     override val deviceKeyStore: DeviceKeyStore by lazy { AndroidKeyStoreKeyManager() }
+
+    private val biometricPreferencesDataStore: DataStore<Preferences> by lazy {
+        PreferenceDataStoreFactory.create(
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            produceFile = { File(applicationContext.noBackupFilesDir, BIOMETRIC_STORE_FILE) },
+        )
+    }
+
+    private val biometricStateStore: BiometricStateStore by lazy {
+        DataStoreBiometricStateStore(biometricPreferencesDataStore)
+    }
+
+    private val credentialClock = SystemCredentialClock()
 
     private val preferenceDataStore: DataStore<Preferences> by lazy {
         PreferenceDataStoreFactory.create(
@@ -63,11 +84,24 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
             keyDeriver = credentialKeyDeriver,
             keyWrapping = keyWrapping,
             random = secureRandom,
-            clock = SystemCredentialClock(),
+            clock = credentialClock,
         )
     }
 
+    override fun biometricAuthenticator(activity: FragmentActivity): BiometricAuthenticator =
+        DefaultBiometricAuthenticator(
+            primaryCredentials = primaryCredentialService,
+            platform = AndroidBiometricPromptPlatform(
+                activity = activity,
+                manager = BiometricManager.from(activity),
+                random = secureRandom,
+            ),
+            stateStore = biometricStateStore,
+            clock = credentialClock,
+        )
+
     private companion object {
         const val CREDENTIAL_STORE_FILE = "nivara_primary_credential.preferences_pb"
+        const val BIOMETRIC_STORE_FILE = "nivara_biometric_state.preferences_pb"
     }
 }

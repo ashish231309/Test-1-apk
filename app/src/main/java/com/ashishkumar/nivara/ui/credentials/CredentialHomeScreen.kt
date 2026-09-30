@@ -15,6 +15,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,20 +23,38 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ashishkumar.nivara.R
+import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticationResult
+import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticator
+import com.ashishkumar.nivara.domain.biometrics.BiometricAvailability
+import com.ashishkumar.nivara.domain.biometrics.BiometricStatus
+import com.ashishkumar.nivara.domain.biometrics.BiometricUnavailableReason
 import com.ashishkumar.nivara.domain.credentials.CredentialServiceStatus
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 @Composable
 fun CredentialHomeScreen(
     service: PrimaryCredentialService,
+    biometricAuthenticator: BiometricAuthenticator,
     refreshKey: Int,
     onEnroll: () -> Unit,
     onVerify: (PrimaryCredentialType) -> Unit,
     onChange: (PrimaryCredentialType) -> Unit,
+    onEnableBiometric: (PrimaryCredentialType) -> Unit,
+    onDisableBiometric: (PrimaryCredentialType) -> Unit,
 ) {
     var status by remember { mutableStateOf<CredentialServiceStatus?>(null) }
-    LaunchedEffect(service, refreshKey) { status = service.status() }
+    var biometricStatus by remember { mutableStateOf<BiometricStatus?>(null) }
+    var biometricResult by remember { mutableStateOf<BiometricAuthenticationResult?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(service, biometricAuthenticator, refreshKey) {
+        status = service.status()
+        biometricStatus = biometricAuthenticator.status()
+        biometricResult = null
+    }
 
     Scaffold { padding ->
         Column(
@@ -63,6 +82,34 @@ fun CredentialHomeScreen(
                     OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = { onChange(current.type) }) {
                         Text(stringResource(R.string.credential_change))
                     }
+                    if (biometricStatus == null) {
+                        CircularProgressIndicator(modifier = Modifier.padding(top = 16.dp))
+                    } else {
+                        BiometricControls(
+                            status = biometricStatus!!,
+                            result = biometricResult,
+                            busy = busy,
+                            onAuthenticate = {
+                                if (!busy) scope.launch {
+                                    busy = true
+                                    biometricResult = null
+                                    try {
+                                        biometricResult = biometricAuthenticator.authenticate()
+                                    } catch (failure: CancellationException) {
+                                        throw failure
+                                    } catch (_: Exception) {
+                                        biometricResult = BiometricAuthenticationResult.SystemError
+                                    } finally {
+                                        busy = false
+                                        biometricStatus = biometricAuthenticator.status()
+                                    }
+                                }
+                            },
+                            onEnable = { onEnableBiometric(current.type) },
+                            onDisable = { onDisableBiometric(current.type) },
+                            onPrimaryFallback = { onVerify(current.type) },
+                        )
+                    }
                 }
                 CredentialServiceStatus.InvalidConfiguration -> Text(
                     stringResource(R.string.credential_configuration_unavailable),
@@ -70,6 +117,80 @@ fun CredentialHomeScreen(
                     textAlign = TextAlign.Center,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun BiometricControls(
+    status: BiometricStatus,
+    result: BiometricAuthenticationResult?,
+    busy: Boolean,
+    onAuthenticate: () -> Unit,
+    onEnable: () -> Unit,
+    onDisable: () -> Unit,
+    onPrimaryFallback: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.padding(top = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when (status) {
+            is BiometricStatus.Disabled -> {
+                Text("Biometric authentication is disabled.")
+                if (status.availability == BiometricAvailability.AVAILABLE) {
+                    Button(onClick = onEnable) { Text("Enable biometrics") }
+                } else {
+                    Text(availabilityMessage(status.availability), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            BiometricStatus.Enabled -> {
+                Text("Biometric authentication is enabled.")
+                Button(enabled = !busy, onClick = onAuthenticate) {
+                    Text(if (busy) "Waiting for biometric…" else "Authenticate with biometrics")
+                }
+                OutlinedButton(enabled = !busy, onClick = onDisable) { Text("Disable biometrics") }
+            }
+            is BiometricStatus.Invalidated -> {
+                Text("Biometric authentication needs setup again. Your primary credential is unchanged.")
+                if (status.availability == BiometricAvailability.AVAILABLE) {
+                    Button(onClick = onEnable) { Text("Set up biometrics again") }
+                } else {
+                    Text(availabilityMessage(status.availability), style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedButton(onClick = onDisable) { Text("Disable biometrics") }
+            }
+            is BiometricStatus.Unavailable -> {
+                Text(unavailableMessage(status.reason))
+                OutlinedButton(onClick = onDisable) { Text("Disable biometrics") }
+            }
+            is BiometricStatus.TemporarilyBlocked -> {
+                Text(
+                    "Biometrics are temporarily limited. Try again in ${((status.retryAfterMillis + 999) / 1_000).coerceAtLeast(1)} seconds.",
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Button(enabled = !busy, onClick = onAuthenticate) { Text("Try biometric authentication") }
+                OutlinedButton(onClick = onDisable) { Text("Disable biometrics") }
+            }
+        }
+        result?.let {
+            Text(
+                authenticationMessage(it),
+                color = if (it is BiometricAuthenticationResult.Authenticated) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            )
+        }
+        if (result != null && result !is BiometricAuthenticationResult.Authenticated) {
+            OutlinedButton(enabled = !busy, onClick = onPrimaryFallback) {
+                Text("Use PIN, password, or pattern")
+            }
+        }
+        if (result is BiometricAuthenticationResult.Authenticated) {
+            Text("Biometric authentication succeeded.", color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -106,3 +227,39 @@ fun PrimaryCredentialType.displayName(): String = stringResource(
         PrimaryCredentialType.PATTERN -> R.string.credential_type_pattern
     },
 )
+
+private fun availabilityMessage(availability: BiometricAvailability): String = when (availability) {
+    BiometricAvailability.AVAILABLE -> "Biometric hardware is available."
+    BiometricAvailability.NO_HARDWARE -> "This device has no supported biometric hardware."
+    BiometricAvailability.HARDWARE_UNAVAILABLE -> "Biometric hardware is temporarily unavailable."
+    BiometricAvailability.NO_ENROLLED_BIOMETRICS -> "Enroll a strong biometric in Android settings first."
+    BiometricAvailability.UNSUPPORTED -> "This device does not support the required biometric configuration."
+    BiometricAvailability.SECURITY_UPDATE_REQUIRED -> "Update Android security components before using biometrics."
+    BiometricAvailability.UNKNOWN -> "Biometric availability could not be determined."
+}
+
+private fun unavailableMessage(reason: BiometricUnavailableReason): String = when (reason) {
+    BiometricUnavailableReason.NO_HARDWARE -> "Biometric hardware is unavailable."
+    BiometricUnavailableReason.HARDWARE_UNAVAILABLE -> "Biometric hardware is temporarily unavailable."
+    BiometricUnavailableReason.NO_ENROLLED_BIOMETRICS -> "No strong biometric is enrolled on this device."
+    BiometricUnavailableReason.UNSUPPORTED -> "This device does not support the required biometric configuration."
+    BiometricUnavailableReason.SECURITY_UPDATE_REQUIRED -> "Update Android security components before using biometrics."
+    BiometricUnavailableReason.PRIMARY_CREDENTIAL_REQUIRED -> "Set up a primary credential before enabling biometrics."
+    BiometricUnavailableReason.PRIMARY_CREDENTIAL_UNAVAILABLE -> "The primary credential must be repaired before using biometrics."
+    BiometricUnavailableReason.UNKNOWN -> "Biometric authentication is currently unavailable."
+}
+
+private fun authenticationMessage(result: BiometricAuthenticationResult): String = when (result) {
+    BiometricAuthenticationResult.Authenticated -> "Biometric authentication succeeded."
+    BiometricAuthenticationResult.Failed -> "Biometric authentication failed."
+    BiometricAuthenticationResult.UserCancelled -> "Biometric authentication was cancelled."
+    BiometricAuthenticationResult.PrimaryCredentialRequired -> "Use your primary credential to continue."
+    is BiometricAuthenticationResult.TemporarilyBlocked ->
+        "Too many biometric failures. Try again in ${((result.retryAfterMillis + 999) / 1_000).coerceAtLeast(1)} seconds."
+    BiometricAuthenticationResult.SystemLockedOut -> "Android has temporarily locked biometric authentication. Use your primary credential."
+    is BiometricAuthenticationResult.Unavailable -> unavailableMessage(result.reason)
+    BiometricAuthenticationResult.Invalidated -> "The biometric key was invalidated. Use your primary credential and set biometrics up again."
+    BiometricAuthenticationResult.SystemError -> "Biometric authentication could not be completed."
+    BiometricAuthenticationResult.NotEnabled -> "Biometric authentication is not enabled."
+    BiometricAuthenticationResult.PersistenceFailure -> "Biometric security state is unavailable."
+}

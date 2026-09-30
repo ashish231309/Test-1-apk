@@ -1,17 +1,19 @@
 package com.ashishkumar.nivara
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import com.ashishkumar.nivara.ui.NivaraApp
 import com.ashishkumar.nivara.ui.theme.NivaraTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val container = (application as NivaraApplication).container
+        val biometricAuthenticator = container.biometricAuthenticator(this)
         setContent {
             NivaraTheme {
-                NivaraApp((application as NivaraApplication).container.primaryCredentialService)
+                NivaraApp(container.primaryCredentialService, biometricAuthenticator)
             }
         }
     }

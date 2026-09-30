@@ -6,12 +6,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import androidx.compose.ui.unit.dp
+import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticator
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
 import com.ashishkumar.nivara.ui.credentials.CredentialEditorScreen
@@ -20,18 +21,29 @@ import com.ashishkumar.nivara.ui.credentials.CredentialHomeScreen
 import com.ashishkumar.nivara.ui.credentials.CredentialTypeSelectionScreen
 
 @Composable
-fun NivaraApp(primaryCredentialService: PrimaryCredentialService) {
+fun NivaraApp(
+    primaryCredentialService: PrimaryCredentialService,
+    biometricAuthenticator: BiometricAuthenticator,
+) {
     val navController = rememberNavController()
     var homeRefreshKey by remember { mutableIntStateOf(0) }
+    val finishEditor: () -> Unit = {
+        homeRefreshKey++
+        navController.popBackStack(HOME, inclusive = false)
+        Unit
+    }
 
     NavHost(navController = navController, startDestination = HOME) {
         composable(HOME) {
             CredentialHomeScreen(
                 service = primaryCredentialService,
+                biometricAuthenticator = biometricAuthenticator,
                 refreshKey = homeRefreshKey,
                 onEnroll = { navController.navigate(SELECT_TYPE) },
                 onVerify = { type -> navController.navigate("$VERIFY/${type.storageValue}") },
                 onChange = { type -> navController.navigate("$CHANGE/${type.storageValue}") },
+                onEnableBiometric = { type -> navController.navigate("$BIOMETRIC_ENABLE/${type.storageValue}") },
+                onDisableBiometric = { type -> navController.navigate("$BIOMETRIC_DISABLE/${type.storageValue}") },
             )
         }
         composable(SELECT_TYPE) {
@@ -45,60 +57,75 @@ fun NivaraApp(primaryCredentialService: PrimaryCredentialService) {
             arguments = listOf(navArgument("type") { type = NavType.StringType }),
         ) { entry ->
             val type = PrimaryCredentialType.fromStorageValue(entry.arguments?.getString("type").orEmpty())
-            if (type == null) {
-                InvalidCredentialRoute { navController.popBackStack() }
-            } else {
-                CredentialEditorScreen(
-                    service = primaryCredentialService,
-                    mode = CredentialFlowMode.ENROLL,
-                    type = type,
-                    onBack = { navController.popBackStack() },
-                    onDone = {
-                        homeRefreshKey++
-                        navController.popBackStack(HOME, inclusive = false)
-                    },
-                )
-            }
+            if (type == null) InvalidCredentialRoute { navController.popBackStack() }
+            else CredentialEditorScreen(
+                service = primaryCredentialService,
+                biometricAuthenticator = biometricAuthenticator,
+                mode = CredentialFlowMode.ENROLL,
+                type = type,
+                onBack = { navController.popBackStack() },
+                onDone = finishEditor,
+            )
         }
         composable(
             route = "$VERIFY/{type}",
             arguments = listOf(navArgument("type") { type = NavType.StringType }),
         ) { entry ->
             val type = PrimaryCredentialType.fromStorageValue(entry.arguments?.getString("type").orEmpty())
-            if (type == null) {
-                InvalidCredentialRoute { navController.popBackStack() }
-            } else {
-                CredentialEditorScreen(
-                    service = primaryCredentialService,
-                    mode = CredentialFlowMode.VERIFY,
-                    type = type,
-                    onBack = { navController.popBackStack() },
-                    onDone = {
-                        homeRefreshKey++
-                        navController.popBackStack(HOME, inclusive = false)
-                    },
-                )
-            }
+            if (type == null) InvalidCredentialRoute { navController.popBackStack() }
+            else CredentialEditorScreen(
+                service = primaryCredentialService,
+                biometricAuthenticator = biometricAuthenticator,
+                mode = CredentialFlowMode.VERIFY,
+                type = type,
+                onBack = { navController.popBackStack() },
+                onDone = finishEditor,
+            )
         }
         composable(
             route = "$CHANGE/{type}",
             arguments = listOf(navArgument("type") { type = NavType.StringType }),
         ) { entry ->
             val type = PrimaryCredentialType.fromStorageValue(entry.arguments?.getString("type").orEmpty())
-            if (type == null) {
-                InvalidCredentialRoute { navController.popBackStack() }
-            } else {
-                CredentialEditorScreen(
-                    service = primaryCredentialService,
-                    mode = CredentialFlowMode.CHANGE,
-                    type = type,
-                    onBack = { navController.popBackStack() },
-                    onDone = {
-                        homeRefreshKey++
-                        navController.popBackStack(HOME, inclusive = false)
-                    },
-                )
-            }
+            if (type == null) InvalidCredentialRoute { navController.popBackStack() }
+            else CredentialEditorScreen(
+                service = primaryCredentialService,
+                biometricAuthenticator = biometricAuthenticator,
+                mode = CredentialFlowMode.CHANGE,
+                type = type,
+                onBack = { navController.popBackStack() },
+                onDone = finishEditor,
+            )
+        }
+        composable(
+            route = "$BIOMETRIC_ENABLE/{type}",
+            arguments = listOf(navArgument("type") { type = NavType.StringType }),
+        ) { entry ->
+            val type = PrimaryCredentialType.fromStorageValue(entry.arguments?.getString("type").orEmpty())
+            if (type == null) InvalidCredentialRoute { navController.popBackStack() }
+            else CredentialEditorScreen(
+                service = primaryCredentialService,
+                biometricAuthenticator = biometricAuthenticator,
+                mode = CredentialFlowMode.BIOMETRIC_ENABLE,
+                type = type,
+                onBack = { navController.popBackStack() },
+                onDone = finishEditor,
+            )
+        }
+        composable(
+            route = "$BIOMETRIC_DISABLE/{type}",
+            arguments = listOf(navArgument("type") { type = NavType.StringType }),
+        ) { entry ->
+            val type = PrimaryCredentialType.fromStorageValue(entry.arguments?.getString("type").orEmpty())
+            if (type == null) InvalidCredentialRoute { navController.popBackStack() }
+            else CredentialEditorScreen(
+                service = primaryCredentialService,
+                biometricAuthenticator = biometricAuthenticator,
+                mode = CredentialFlowMode.BIOMETRIC_DISABLE,
+                type = type,
+                onBack = { navController.popBackStack() },
+                onDone = finishEditor,
+            )
         }
     }
 }
@@ -122,3 +149,5 @@ private const val SELECT_TYPE = "credential/select-type"
 private const val ENROLL = "credential/enroll"
 private const val VERIFY = "credential/verify"
 private const val CHANGE = "credential/change"
+private const val BIOMETRIC_ENABLE = "biometric/enable"
+private const val BIOMETRIC_DISABLE = "biometric/disable"

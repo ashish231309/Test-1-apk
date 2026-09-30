@@ -38,6 +38,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.ashishkumar.nivara.R
+import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticator
+import com.ashishkumar.nivara.domain.biometrics.BiometricManagementResult
+import com.ashishkumar.nivara.domain.biometrics.BiometricUnavailableReason
 import com.ashishkumar.nivara.domain.credentials.AuthenticationResult
 import com.ashishkumar.nivara.domain.credentials.CredentialChangeResult
 import com.ashishkumar.nivara.domain.credentials.CredentialRejection
@@ -50,11 +53,12 @@ import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-internal enum class CredentialFlowMode { ENROLL, VERIFY, CHANGE }
+internal enum class CredentialFlowMode { ENROLL, VERIFY, CHANGE, BIOMETRIC_ENABLE, BIOMETRIC_DISABLE }
 
 @Composable
 internal fun CredentialEditorScreen(
     service: PrimaryCredentialService,
+    biometricAuthenticator: BiometricAuthenticator,
     mode: CredentialFlowMode,
     type: PrimaryCredentialType,
     onBack: () -> Unit,
@@ -103,7 +107,7 @@ internal fun CredentialEditorScreen(
                     CredentialFlowMode.VERIFY -> {
                         val submitted = toCredentialChars(type, currentText, currentPattern)
                         currentChars = submitted
-                        when (val result = service.authenticate(submitted)) {
+                        when (val result = biometricAuthenticator.authenticatePrimaryFallback(submitted)) {
                             is AuthenticationResult.Authenticated -> {
                                 success = true
                                 message = "Credential verified successfully."
@@ -143,7 +147,12 @@ internal fun CredentialEditorScreen(
                         when (val result = service.changePrimary(current, targetType, submitted, confirmed)) {
                             is CredentialChangeResult.Changed -> {
                                 success = true
-                                message = "Primary credential changed successfully."
+                                val stateReset = biometricAuthenticator.resetBiometricThrottleAfterPrimarySuccess()
+                                message = if (stateReset) {
+                                    "Primary credential changed successfully."
+                                } else {
+                                    "Primary credential changed. Biometric throttling state could not be refreshed."
+                                }
                             }
                             CredentialChangeResult.NotConfigured -> message = "No primary credential is configured."
                             CredentialChangeResult.AuthenticationFailed -> message = "The current credential was not accepted."
@@ -151,10 +160,66 @@ internal fun CredentialEditorScreen(
                                 val seconds = ((result.retryAfterMillis + 999) / 1_000).coerceAtLeast(1)
                                 message = "Please wait $seconds seconds before trying again."
                             }
-                            CredentialChangeResult.ConfirmationMismatch -> message = "The new entries do not match. Try again."
-                            is CredentialChangeResult.Rejected -> message = rejectionMessage(result.reason)
+                            CredentialChangeResult.ConfirmationMismatch -> {
+                                biometricAuthenticator.resetBiometricThrottleAfterPrimarySuccess()
+                                message = "The new entries do not match. Try again."
+                            }
+                            is CredentialChangeResult.Rejected -> {
+                                biometricAuthenticator.resetBiometricThrottleAfterPrimarySuccess()
+                                message = rejectionMessage(result.reason)
+                            }
                             CredentialChangeResult.InvalidConfiguration -> message = "Credential configuration is unavailable."
-                            CredentialChangeResult.StorageFailure -> message = "Credential configuration could not be saved."
+                            CredentialChangeResult.StorageFailure -> {
+                                biometricAuthenticator.resetBiometricThrottleAfterPrimarySuccess()
+                                message = "Credential configuration could not be saved."
+                            }
+                        }
+                    }
+                    CredentialFlowMode.BIOMETRIC_ENABLE -> {
+                        val submitted = toCredentialChars(type, currentText, currentPattern)
+                        currentChars = submitted
+                        when (val result = biometricAuthenticator.enable(submitted)) {
+                            BiometricManagementResult.Enabled -> {
+                                success = true
+                                message = "Biometric authentication enabled."
+                            }
+                            BiometricManagementResult.AlreadyEnabled -> message = "Biometric authentication is already enabled."
+                            BiometricManagementResult.AlreadyDisabled -> message = "Biometric authentication is disabled."
+                            BiometricManagementResult.PrimaryCredentialRequired -> message = "Set up a primary credential first."
+                            BiometricManagementResult.PrimaryAuthenticationFailed -> message = "The primary credential was not accepted."
+                            is BiometricManagementResult.PrimaryTemporarilyBlocked -> message = waitMessage(result.retryAfterMillis)
+                            is BiometricManagementResult.Unavailable -> message = managementUnavailableMessage(result.reason)
+                            BiometricManagementResult.UserCancelled -> message = "Biometric setup was cancelled."
+                            is BiometricManagementResult.TemporarilyBlocked -> message = waitMessage(result.retryAfterMillis)
+                            BiometricManagementResult.SystemLockedOut -> message = "Android has temporarily locked biometric authentication."
+                            BiometricManagementResult.Invalidated -> message = "The biometric key was invalidated. Try setup again."
+                            BiometricManagementResult.PersistenceFailure -> message = "Biometric security state could not be saved."
+                            BiometricManagementResult.SystemError -> message = "Biometric setup could not be completed."
+                        }
+                    }
+                    CredentialFlowMode.BIOMETRIC_DISABLE -> {
+                        val submitted = toCredentialChars(type, currentText, currentPattern)
+                        currentChars = submitted
+                        when (val result = biometricAuthenticator.disable(submitted)) {
+                            BiometricManagementResult.Disabled -> {
+                                success = true
+                                message = "Biometric authentication disabled. Your primary credential is unchanged."
+                            }
+                            BiometricManagementResult.AlreadyDisabled -> {
+                                success = true
+                                message = "Biometric authentication is already disabled."
+                            }
+                            BiometricManagementResult.AlreadyEnabled -> message = "Biometric authentication is enabled."
+                            BiometricManagementResult.PrimaryCredentialRequired -> message = "A primary credential is required."
+                            BiometricManagementResult.PrimaryAuthenticationFailed -> message = "The primary credential was not accepted."
+                            is BiometricManagementResult.PrimaryTemporarilyBlocked -> message = waitMessage(result.retryAfterMillis)
+                            is BiometricManagementResult.Unavailable -> message = managementUnavailableMessage(result.reason)
+                            BiometricManagementResult.UserCancelled -> message = "Biometric disablement was cancelled."
+                            is BiometricManagementResult.TemporarilyBlocked -> message = waitMessage(result.retryAfterMillis)
+                            BiometricManagementResult.SystemLockedOut -> message = "Android has temporarily locked biometric authentication."
+                            BiometricManagementResult.Invalidated -> message = "The biometric key is invalidated; use setup to replace it."
+                            BiometricManagementResult.PersistenceFailure -> message = "Biometric security state could not be saved."
+                            BiometricManagementResult.SystemError -> message = "Biometric disablement could not be completed."
                         }
                     }
                 }
@@ -179,6 +244,8 @@ internal fun CredentialEditorScreen(
         CredentialFlowMode.ENROLL -> stringResource(R.string.credential_enroll_title, type.displayName())
         CredentialFlowMode.VERIFY -> stringResource(R.string.credential_verify_title, type.displayName())
         CredentialFlowMode.CHANGE -> stringResource(R.string.credential_change_title)
+        CredentialFlowMode.BIOMETRIC_ENABLE -> "Enable biometric authentication"
+        CredentialFlowMode.BIOMETRIC_DISABLE -> "Disable biometric authentication"
     }
 
     Scaffold { padding ->
@@ -264,6 +331,15 @@ internal fun CredentialEditorScreen(
                             onPatternChange = { confirmationPattern = it },
                         )
                     }
+                    CredentialFlowMode.BIOMETRIC_ENABLE, CredentialFlowMode.BIOMETRIC_DISABLE ->
+                        CredentialEntry(
+                            type = type,
+                            label = "Enter your current ${type.displayName()} to continue",
+                            text = currentText,
+                            onTextChange = { currentText = it },
+                            pattern = currentPattern,
+                            onPatternChange = { currentPattern = it },
+                        )
                 }
                 message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (busy) CircularProgressIndicator()
@@ -273,6 +349,8 @@ internal fun CredentialEditorScreen(
                             CredentialFlowMode.ENROLL -> stringResource(R.string.credential_save)
                             CredentialFlowMode.VERIFY -> stringResource(R.string.credential_verify)
                             CredentialFlowMode.CHANGE -> stringResource(R.string.credential_change)
+                            CredentialFlowMode.BIOMETRIC_ENABLE -> "Authenticate and enable"
+                            CredentialFlowMode.BIOMETRIC_DISABLE -> "Authenticate and disable"
                         },
                     )
                 }
@@ -329,6 +407,31 @@ private fun toCredentialChars(
     }
 } else {
     text.toCharArray()
+}
+
+private suspend fun BiometricAuthenticator.resetBiometricThrottleAfterPrimarySuccess(): Boolean = try {
+    recordPrimaryAuthenticationSuccess()
+    true
+} catch (failure: CancellationException) {
+    throw failure
+} catch (_: Exception) {
+    false
+}
+
+private fun waitMessage(retryAfterMillis: Long): String {
+    val seconds = ((retryAfterMillis + 999) / 1_000).coerceAtLeast(1)
+    return "Please wait $seconds seconds before trying again."
+}
+
+private fun managementUnavailableMessage(reason: BiometricUnavailableReason): String = when (reason) {
+    BiometricUnavailableReason.NO_HARDWARE -> "This device has no supported biometric hardware."
+    BiometricUnavailableReason.HARDWARE_UNAVAILABLE -> "Biometric hardware is temporarily unavailable."
+    BiometricUnavailableReason.NO_ENROLLED_BIOMETRICS -> "Enroll a strong biometric in Android settings first."
+    BiometricUnavailableReason.UNSUPPORTED -> "This device does not support the required biometric configuration."
+    BiometricUnavailableReason.SECURITY_UPDATE_REQUIRED -> "Update Android security components before using biometrics."
+    BiometricUnavailableReason.PRIMARY_CREDENTIAL_REQUIRED -> "A primary credential must be configured first."
+    BiometricUnavailableReason.PRIMARY_CREDENTIAL_UNAVAILABLE -> "The primary credential is unavailable."
+    BiometricUnavailableReason.UNKNOWN -> "Biometric authentication is currently unavailable."
 }
 
 private fun rejectionMessage(reason: CredentialRejection): String = when (reason) {
