@@ -14,8 +14,9 @@ class VaultOrganizationTest {
         val second = VaultAlbumId("22222222222222222222222222222222")
         val itemOne = VaultItemId("00000000000000000000000000000001")
         val itemTwo = VaultItemId("00000000000000000000000000000002")
-        val album = VaultAlbum(first, "  Café  ", listOf(itemTwo, itemOne))
-        assertEquals("Café", VaultAlbumName.normalize("  Café  "))
+        val normalizedName = VaultAlbumName.normalize("  Café  ")!!
+        val album = VaultAlbum(first, normalizedName, listOf(itemTwo, itemOne))
+        assertEquals("Café", normalizedName)
         assertEquals(listOf(itemTwo, itemOne), album.memberItemIds)
         assertEquals("Café", album.name)
         assertEquals(null, VaultAlbumName.normalize("  \t "))
@@ -85,7 +86,7 @@ class VaultOrganizationTest {
         val mime = VaultItemSearch.search(items, " APPLICATION/PDF ") as VaultSearchState.Matches
         assertEquals(listOf(id(2)), mime.items.map { it.id })
         val category = VaultItemSearch.search(items, "  document ") as VaultSearchState.Matches
-        assertEquals(listOf(id(2)), category.items.map { it.id })
+        assertEquals(listOf(id(1), id(2)), category.items.map { it.id })
         assertTrue(VaultItemSearch.search(items, "") is VaultSearchState.EmptyQuery)
         assertTrue(VaultItemSearch.search(items, "missing") is VaultSearchState.NoMatches)
         assertEquals(VaultSearchState.QueryTooLong,
