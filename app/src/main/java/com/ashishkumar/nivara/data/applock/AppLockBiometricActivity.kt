@@ -103,7 +103,7 @@ class AppLockBiometricActivity : FragmentActivity() {
     override fun onBackPressed() {
         promptJob?.cancel()
         requestId?.let(container.appLockPresentationController::biometricHostCancelled)
-        finish()
+        super.onBackPressed()
     }
 
     override fun onDestroy() {
