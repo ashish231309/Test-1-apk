@@ -54,7 +54,7 @@ jobs:
               for test in root.iter('testcase'):
                   for failure in list(test.findall('failure')) + list(test.findall('error')):
                       print(f"{test.get('classname')}#{test.get('name')}: {failure.get('message', '')}")
-                      for line in (failure.text or '').splitlines()[-6:]:
+                      for line in (failure.text or '').splitlines()[-25:]:
                           print(line)
           PY
             if [[ -s "$RUNNER_TEMP/test-failures.txt" ]]; then
@@ -70,3 +70,11 @@ jobs:
             fi
           fi
           exit "$result"
+      - name: Upload JVM test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-reports-${{ github.run_id }}
+          path: app/build/test-results/testDebugUnitTest/
+          if-no-files-found: ignore
+          retention-days: 3
