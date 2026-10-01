@@ -54,8 +54,13 @@ jobs:
               for test in root.iter('testcase'):
                   for failure in list(test.findall('failure')) + list(test.findall('error')):
                       print(f"{test.get('classname')}#{test.get('name')}: {failure.get('message', '')}")
-                      for line in (failure.text or '').splitlines()[-25:]:
+                      failure_lines = (failure.text or '').splitlines()
+                      for line in failure_lines[:25]:
                           print(line)
+                      if len(failure_lines) > 25:
+                          print('... remaining stack omitted ...')
+                          for line in failure_lines[-8:]:
+                              print(line)
           PY
             if [[ -s "$RUNNER_TEMP/test-failures.txt" ]]; then
               while IFS= read -r line; do
