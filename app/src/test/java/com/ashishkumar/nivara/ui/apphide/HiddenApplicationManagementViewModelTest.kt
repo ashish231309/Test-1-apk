@@ -107,7 +107,7 @@ class HiddenApplicationManagementViewModelTest {
         advanceUntilIdle()
 
         viewModel.setSection(HiddenApplicationSection.HIDDEN)
-        viewModel.setQuery("com.example.no")
+        viewModel.setQuery("com.example.missing")
         assertTrue(viewModel.state.value is HiddenApplicationManagementState.NoResults)
         viewModel.setQuery("notes")
         assertEquals(listOf("com.example.notes"), ready(viewModel).visibleApplications.map { it.application.packageName })

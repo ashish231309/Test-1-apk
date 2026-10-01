@@ -273,7 +273,8 @@ class DefaultSessionManagerTest {
         assertTrue(second.expiresAtElapsedRealtimeMillis > first.expiresAtElapsedRealtimeMillis)
         assertEquals(
             setOf("source", "authenticatedAtElapsedRealtimeMillis", "expiresAtElapsedRealtimeMillis"),
-            second.javaClass.declaredFields.map { it.name }.toSet(),
+            second.javaClass.declaredFields.filterNot { it.isSynthetic || it.name.startsWith("\$") }
+                .map { it.name }.toSet(),
         )
     }
 
