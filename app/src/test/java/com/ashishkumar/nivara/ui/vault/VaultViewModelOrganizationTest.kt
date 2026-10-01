@@ -58,6 +58,7 @@ class VaultViewModelOrganizationTest {
         vm.setSearchQuery("x".repeat(10_000))
         assertEquals(VaultItemSearch.MAX_QUERY_CODE_POINTS * 2 + 1, vm.state.value.searchQuery.length)
         assertEquals(VaultSearchState.QueryTooLong, vm.state.value.searchState)
+        vm.setSearchQuery("")
         index.result = VaultIndexRead.Corrupt
         vm.refresh()
         advanceUntilIdle()
