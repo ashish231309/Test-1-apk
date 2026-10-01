@@ -35,10 +35,6 @@ jobs:
           result=$?
           if (( result != 0 )); then
             tail -n 40 "$RUNNER_TEMP/gradle.log" >&2
-            grep -E '(^e: |^FAILURE:|^\* What went wrong:|^Execution failed for task|^> Task .*FAILED|^Caused by:|AssertionError|expected:<|but was:<|There were failing tests|Compilation error|error: )' "$RUNNER_TEMP/gradle.log" | tail -n 40 | while IFS= read -r line; do
-              diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
-              echo "::error title=Gradle diagnostics::$diagnostic"
-            done
             python3 - <<'PY' > "$RUNNER_TEMP/test-failures.txt"
           import pathlib
           import xml.etree.ElementTree as ET
@@ -51,9 +47,16 @@ jobs:
                       for line in (failure.text or '').splitlines()[-6:]:
                           print(line)
           PY
-            while IFS= read -r line; do
-              diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
-              echo "::error title=JVM test diagnostics::$diagnostic"
-            done < "$RUNNER_TEMP/test-failures.txt"
+            if [[ -s "$RUNNER_TEMP/test-failures.txt" ]]; then
+              while IFS= read -r line; do
+                diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
+                echo "::error title=JVM test diagnostics::$diagnostic"
+              done < "$RUNNER_TEMP/test-failures.txt"
+            else
+              grep -E '(^e: |^FAILURE:|^\* What went wrong:|^Execution failed for task|^> Task .*FAILED|^Caused by:|AssertionError|expected:<|but was:<|There were failing tests|Compilation error|error: )' "$RUNNER_TEMP/gradle.log" | tail -n 40 | while IFS= read -r line; do
+                diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
+                echo "::error title=Gradle diagnostics::$diagnostic"
+              done
+            fi
           fi
           exit "$result"
