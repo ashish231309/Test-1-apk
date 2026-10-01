@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Usage Access is a user-controlled AppOps capability granted from system Settings. -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- Required for the persistent, user-visible monitoring service; no runtime prompt is associated. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Required only for Nivara's secure TYPE_APPLICATION_OVERLAY App Lock surface. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Narrow visibility to activities users can launch; do not enumerate all installed packages. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+    <application
+        android:name=".NivaraApplication"
+        android:allowBackup="false"
+        android:icon="@mipmap/camouflage_home"
+        android:label="@string/camouflage_identity_label"
+        android:roundIcon="@mipmap/camouflage_home"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="false">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:icon="@mipmap/camouflage_home"
+            android:label="@string/camouflage_identity_label"
+            android:roundIcon="@mipmap/camouflage_home">
+            <!-- Ordinary app-drawer entry for recovery whether or not Nivara is the selected Home app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".LauncherActivity"
+            android:exported="true"
+            android:icon="@mipmap/camouflage_home"
+            android:label="@string/camouflage_identity_label"
+            android:roundIcon="@mipmap/camouflage_home">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".data.applock.AppLockBiometricActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@style/AppLockBiometricTheme" />
+        <service
+            android:name=".data.applock.AppLockDetectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Monitors user-selected protected applications using Usage Access and exposes authentication-required decisions to Nivara." />
+        </service>
+    </application>
+</manifest>

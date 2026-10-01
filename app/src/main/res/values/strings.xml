@@ -1,0 +1,35 @@
+<resources>
+    <string name="app_name">Nivara</string>
+    <string name="camouflage_identity_label">Home</string>
+    <string name="home_welcome">Your privacy and security workspace starts here.</string>
+    <string name="retry">Try again</string>
+    <string name="credential_setup">Set up primary credential</string>
+    <string name="credential_configured">Primary credential: %1$s</string>
+    <string name="credential_verify">Verify credential</string>
+    <string name="credential_change">Change primary credential</string>
+    <string name="credential_configuration_unavailable">Credential configuration is unavailable. Secure recovery will be provided in a later stage.</string>
+    <string name="credential_select_title">Choose one primary method</string>
+    <string name="credential_type_pin">PIN</string>
+    <string name="credential_type_password">Password</string>
+    <string name="credential_type_pattern">Pattern</string>
+    <string name="credential_enroll_title">Set up %1$s</string>
+    <string name="credential_verify_title">Verify %1$s</string>
+    <string name="credential_enter_label">Enter %1$s</string>
+    <string name="credential_confirm_label">Confirm %1$s</string>
+    <string name="credential_current_label">Current %1$s</string>
+    <string name="credential_new_label">New %1$s</string>
+    <string name="credential_new_type">Choose the replacement method</string>
+    <string name="credential_save">Save credential</string>
+    <string name="pattern_instructions">Draw a connected pattern through at least four points.</string>
+    <string name="cancel">Cancel</string>
+    <string name="done">Done</string>
+    <string name="app_lock_monitor_channel_name">App Lock monitoring</string>
+    <string name="app_lock_monitor_channel_description">Visible status for Nivara\'s selected-app protection monitoring.</string>
+    <string name="app_lock_monitor_notification_title">Nivara App Lock</string>
+    <string name="app_lock_monitor_starting">Starting protection monitoring.</string>
+    <string name="app_lock_monitor_active">Protection monitoring is active.</string>
+    <string name="app_lock_monitor_attention">Monitoring needs attention. Open Nivara to review access or configuration.</string>
+    <string name="app_lock_monitor_no_apps">No protected apps are configured; monitoring is idle.</string>
+    <string name="app_lock_monitor_stopped">Protection monitoring is stopped.</string>
+    <string name="app_lock_monitor_stop">Stop monitoring</string>
+</resources>

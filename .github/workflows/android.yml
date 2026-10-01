@@ -1,0 +1,72 @@
+name: Android foundation
+
+on:
+  push:
+    branches:
+      - 'arena/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4.0.4
+      - name: Install Android SDK components
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6.4.0
+      - name: Verify architecture and negative fixtures
+        run: |
+          python3 tools/verify_nivara.py
+          python3 -m unittest \
+            tools/test_verify_hidden_architecture.py \
+            tools/test_verify_launcher_architecture.py \
+            tools/test_verify_camouflage_architecture.py \
+            tools/test_verify_vault_architecture.py \
+            tools/test_verify_vault_organization.py \
+            tools/test_verify_vault_trash.py
+      - name: Run JVM tests and build debug, Android-test, and release APKs; lint
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          ./gradlew testDebugUnitTest assembleDebug assembleAndroidTest assembleRelease lint --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle.log"
+          result=$?
+          if (( result != 0 )); then
+            tail -n 40 "$RUNNER_TEMP/gradle.log" >&2
+            python3 - <<'PY' > "$RUNNER_TEMP/test-failures.txt"
+          import pathlib
+          import xml.etree.ElementTree as ET
+
+          for report in pathlib.Path('app/build/test-results/testDebugUnitTest').glob('TEST-*.xml'):
+              root = ET.parse(report).getroot()
+              for test in root.iter('testcase'):
+                  for failure in list(test.findall('failure')) + list(test.findall('error')):
+                      print(f"{test.get('classname')}#{test.get('name')}: {failure.get('message', '')}")
+                      for line in (failure.text or '').splitlines()[-6:]:
+                          print(line)
+          PY
+            if [[ -s "$RUNNER_TEMP/test-failures.txt" ]]; then
+              while IFS= read -r line; do
+                diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
+                echo "::error title=JVM test diagnostics::$diagnostic"
+              done < "$RUNNER_TEMP/test-failures.txt"
+            else
+              grep -E '(^e: |^FAILURE:|^\* What went wrong:|^Execution failed for task|^> Task .*FAILED|^Caused by:|AssertionError|expected:<|but was:<|There were failing tests|Compilation error|error: )' "$RUNNER_TEMP/gradle.log" | tail -n 40 | while IFS= read -r line; do
+                diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
+                echo "::error title=Gradle diagnostics::$diagnostic"
+              done
+            fi
+          fi
+          exit "$result"
