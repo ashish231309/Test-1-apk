@@ -35,4 +35,12 @@ interface ProtectedApplicationRepository {
         application: ProtectedApplication,
         protected: Boolean,
     ): ProtectedApplicationUpdateResult
+
+    /** Idempotent convenience operation; the repository remains the only protected-set owner. */
+    suspend fun protect(application: ProtectedApplication): ProtectedApplicationUpdateResult =
+        setProtected(application, protected = true)
+
+    /** Idempotent convenience operation; the repository remains the only protected-set owner. */
+    suspend fun unprotect(application: ProtectedApplication): ProtectedApplicationUpdateResult =
+        setProtected(application, protected = false)
 }

@@ -30,7 +30,7 @@ interface ApplicationRepository {
     suspend fun discoverLaunchableApplications(): ApplicationDiscoveryResult
 }
 
-/** Predictable baseline ordering; user-selectable ordering and UI filtering belong to a later stage. */
+/** Predictable Android-free name orderings shared by discovery and App Lock management. */
 object InstalledApplicationOrdering {
     fun deterministic(applications: Iterable<InstalledApplication>): List<InstalledApplication> =
         applications.sortedWith(
@@ -38,9 +38,17 @@ object InstalledApplicationOrdering {
                 .thenBy { it.packageName.lowercase(Locale.ROOT) }
                 .thenBy { it.packageName },
         )
+
+    /** Z–A by label; equal labels keep a stable ascending package-name tie break. */
+    fun reverseAlphabetical(applications: Iterable<InstalledApplication>): List<InstalledApplication> =
+        applications.sortedWith(
+            compareByDescending<InstalledApplication> { it.label.lowercase(Locale.ROOT) }
+                .thenBy { it.packageName.lowercase(Locale.ROOT) }
+                .thenBy { it.packageName },
+        )
 }
 
-/** Simple Android-free matching primitive for the future app-list search UI. */
+/** Android-free case-insensitive label and package matching used by App Lock management. */
 object InstalledApplicationSearch {
     fun matches(application: InstalledApplication, query: String): Boolean {
         val normalized = query.trim().lowercase(Locale.ROOT)

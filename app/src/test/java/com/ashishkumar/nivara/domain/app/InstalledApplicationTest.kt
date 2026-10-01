@@ -73,6 +73,25 @@ class InstalledApplicationOrderingTest {
 
         assertEquals(first.map(InstalledApplication::packageName), second.map(InstalledApplication::packageName))
     }
+
+    @Test
+    fun reverseAlphabeticalIsDeterministicAndKeepsPackageTieBreakAscending() {
+        val apps = listOf(
+            InstalledApplication("com.zeta", "Alpha", true),
+            InstalledApplication("com.beta", "Beta", true),
+            InstalledApplication("com.alpha", "ALPHA", true),
+        )
+
+        assertEquals(
+            listOf("com.alpha", "com.zeta", "com.beta"),
+            InstalledApplicationOrdering.reverseAlphabetical(apps).map(InstalledApplication::packageName),
+        )
+        assertEquals(
+            InstalledApplicationOrdering.reverseAlphabetical(apps).map(InstalledApplication::packageName),
+            InstalledApplicationOrdering.reverseAlphabetical(apps.reversed()).map(InstalledApplication::packageName),
+        )
+        assertEquals(listOf("com.zeta", "com.beta", "com.alpha"), apps.map(InstalledApplication::packageName))
+    }
 }
 
 class InstalledApplicationSearchTest {
@@ -96,5 +115,20 @@ class InstalledApplicationSearchTest {
     @Test
     fun unmatchedQueryIsRejected() {
         assertFalse(InstalledApplicationSearch.matches(application, "calendar"))
+    }
+
+    @Test
+    fun multipleMatchesCanBeFilteredInDeterministicOrderAndBlankQueryKeepsAll() {
+        val applications = listOf(
+            InstalledApplication("com.example.photoz", "Photo Z", true),
+            InstalledApplication("com.example.photoa", "Photo A", true),
+            InstalledApplication("com.example.calendar", "Calendar", true),
+        )
+        val ordered = InstalledApplicationOrdering.deterministic(applications)
+        val matches = ordered.filter { InstalledApplicationSearch.matches(it, "photo") }
+
+        assertEquals(listOf("com.example.photoa", "com.example.photoz"), matches.map(InstalledApplication::packageName))
+        assertEquals(ordered, ordered.filter { InstalledApplicationSearch.matches(it, "  ") })
+        assertTrue(matches.all { it.isLaunchable })
     }
 }

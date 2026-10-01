@@ -13,4 +13,9 @@ class AppDestinationTest {
     fun appLockSetupDestinationUsesStableRoute() {
         assertEquals("app-lock/setup", AppDestination.AppLockSetup.route)
     }
+
+    @Test
+    fun appLockManagementDestinationUsesStableRoute() {
+        assertEquals("app-lock/manage", AppDestination.AppLockManagement.route)
+    }
 }

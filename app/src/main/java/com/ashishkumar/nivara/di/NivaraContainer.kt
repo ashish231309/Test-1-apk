@@ -13,6 +13,7 @@ import com.ashishkumar.nivara.data.applock.AndroidOverlayCapabilityRepository
 import com.ashishkumar.nivara.data.applock.AndroidAppLockPresentationController
 import com.ashishkumar.nivara.data.applock.SharedPreferencesProtectedApplicationRepository
 import com.ashishkumar.nivara.data.app.AndroidApplicationRepository
+import com.ashishkumar.nivara.data.app.AndroidApplicationIconProvider
 import com.ashishkumar.nivara.data.permissions.AndroidUsageAccessRepository
 import com.ashishkumar.nivara.domain.app.ApplicationRepository
 import com.ashishkumar.nivara.domain.applock.AppLockMonitor
@@ -59,6 +60,7 @@ interface NivaraContainer {
     val primaryCredentialService: PrimaryCredentialService
     val sessionManager: SessionManager
     val applicationRepository: ApplicationRepository
+    val applicationIconProvider: AndroidApplicationIconProvider
     val usageAccessRepository: UsageAccessRepository
     val overlayCapabilityRepository: OverlayCapabilityRepository
     val protectedApplicationRepository: ProtectedApplicationRepository
@@ -78,6 +80,9 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
     override val deviceKeyStore: DeviceKeyStore by lazy { AndroidKeyStoreKeyManager() }
     override val applicationRepository: ApplicationRepository by lazy {
         AndroidApplicationRepository(applicationContext)
+    }
+    override val applicationIconProvider: AndroidApplicationIconProvider by lazy {
+        AndroidApplicationIconProvider(applicationContext)
     }
     override val usageAccessRepository: UsageAccessRepository by lazy {
         AndroidUsageAccessRepository(applicationContext)

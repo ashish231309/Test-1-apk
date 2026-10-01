@@ -26,7 +26,11 @@ class MainActivity : FragmentActivity() {
                     primaryCredentialService = container.primaryCredentialService,
                     biometricAuthenticator = biometricAuthenticator,
                     sessionManager = container.sessionManager,
+                    appLockMonitor = container.appLockMonitor,
+                    appLockMonitoringController = container.appLockMonitoringController,
                     applicationRepository = container.applicationRepository,
+                    protectedApplicationRepository = container.protectedApplicationRepository,
+                    applicationIconProvider = container.applicationIconProvider,
                     usageAccessRepository = container.usageAccessRepository,
                     overlayCapabilityRepository = container.overlayCapabilityRepository,
                 )

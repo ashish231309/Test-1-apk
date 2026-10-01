@@ -153,8 +153,27 @@ def main() -> None:
         require(required in router, f"authentication routing is missing {required}")
     container = source(production_root / "di/NivaraContainer.kt")
     for binding in ("protectedApplicationRepository", "appLockMonitor", "appLockMonitoringController",
-                    "appLockPresentationController", "sessionManager"):
+                    "appLockPresentationController", "sessionManager", "applicationIconProvider"):
         require(binding in container, f"NivaraContainer is missing App Lock binding {binding}")
+
+    management_view_model = source(production_root / "ui/applock/AppLockManagementViewModel.kt")
+    for required in ("InstalledApplicationSearch.matches", "InstalledApplicationOrdering.deterministic",
+                     "InstalledApplicationOrdering.reverseAlphabetical", "protectedApplicationRepository.protect",
+                     "protectedApplicationRepository.unprotect", "sessionManager.currentState()",
+                     "protectedApplicationRepository.getProtectedApplications()", "appLockMonitor.state"):
+        require(required in management_view_model, f"Stage 9 management is missing {required}")
+    require("AppLockDetectionState.Stopped" in management_view_model and "requestMonitoringStart()" in management_view_model,
+            "Stage 9 must start stopped monitoring after saving a non-empty protected set")
+    management_screen = source(production_root / "ui/applock/AppLockManagementScreen.kt")
+    for required in ("AppLockApplicationSection.ALL", "AppLockApplicationSection.PROTECTED",
+                     "Lifecycle.Event.ON_RESUME", "SessionState.Authenticated", "SecureScreenEffect()"):
+        require(required in management_screen, f"Stage 9 screen is missing {required}")
+    navigation = source(production_root / "ui/NivaraApp.kt")
+    require("AppDestination.AppLockManagement.route" in navigation and "onReturnHomeForAuthentication" in navigation,
+            "Stage 9 management must be reachable and route credential verification to Home")
+    icon_provider = source(production_root / "data/app/AndroidApplicationIconProvider.kt")
+    require("PackageManager" in icon_provider and "NameNotFoundException" in icon_provider,
+            "application icons must stay in PackageManager-backed data code with missing-app fallback")
 
     protected_model = source(domain / "ProtectedApplication.kt")
     require("data class ProtectedApplication(val packageName: String)" in protected_model,
@@ -171,7 +190,7 @@ def main() -> None:
                      "quick lock", "overlay", "battery", "device/emulator", "background", "flag_secure"):
         require(required in docs, f"App Lock documentation must cover {required!r}")
 
-    print("PASS: App Lock permissions, package visibility, service/activity declarations, secure presentation, auth routing, persistence, and docs.")
+    print("PASS: App Lock permissions, service/activity declarations, secure presentation, auth routing, Stage 9 management, persistence, and docs.")
 
 
 if __name__ == "__main__":

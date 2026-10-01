@@ -44,6 +44,15 @@ class SharedPreferencesProtectedApplicationRepositoryInstrumentedTest {
             assertEquals(ProtectedApplicationLookup.Protected, repository.isProtected(first.packageName))
             assertEquals(ProtectedApplicationLookup.NotProtected, repository.isProtected("com.example.other"))
 
+            assertEquals(ProtectedApplicationUpdateResult.UPDATED, repository.protect(first))
+            assertEquals(
+                ProtectedApplicationsSnapshot.Available(setOf(first, second)),
+                repository.getProtectedApplications(),
+            )
+            assertEquals(ProtectedApplicationUpdateResult.UPDATED, repository.unprotect(first))
+            assertEquals(ProtectedApplicationUpdateResult.UPDATED, repository.unprotect(first))
+            assertEquals(ProtectedApplicationsSnapshot.Available(setOf(second)), repository.getProtectedApplications())
+
             assertTrue(preferences.edit().putString("protected_packages", "not a package").commit())
             assertEquals(ProtectedApplicationsSnapshot.Unavailable, repository.getProtectedApplications())
             assertEquals(

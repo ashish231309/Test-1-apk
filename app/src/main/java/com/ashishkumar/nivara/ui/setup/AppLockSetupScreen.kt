@@ -37,6 +37,7 @@ fun AppLockSetupScreen(
     usageAccessRepository: UsageAccessRepository,
     overlayCapabilityRepository: OverlayCapabilityRepository,
     onBack: () -> Unit,
+    onManageProtectedApps: () -> Unit,
 ) {
     SecureScreenEffect()
     val factory = remember(applicationRepository, usageAccessRepository, overlayCapabilityRepository) {
@@ -65,9 +66,10 @@ fun AppLockSetupScreen(
             OutlinedButton(onClick = onBack) { Text("Back") }
             Text(
                 "Usage Access lets Nivara detect protected apps. Overlay access lets it display the App Lock surface. " +
-                    "Protection is unreliable until both permissions are available.",
+                    "Protection is unreliable until both permissions are available. Saved protected choices are not cleared when a prerequisite is missing.",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            OutlinedButton(onClick = onManageProtectedApps) { Text("Manage protected applications") }
 
             when (val current = state) {
                 AppLockSetupUiState.Loading -> {

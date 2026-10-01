@@ -13,6 +13,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.ashishkumar.nivara.domain.app.ApplicationRepository
+import com.ashishkumar.nivara.data.app.AndroidApplicationIconProvider
+import com.ashishkumar.nivara.domain.applock.ProtectedApplicationRepository
+import com.ashishkumar.nivara.domain.applock.AppLockMonitor
+import com.ashishkumar.nivara.domain.applock.AppLockMonitoringController
+import com.ashishkumar.nivara.ui.applock.AppLockManagementScreen
 import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticator
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
@@ -31,7 +36,11 @@ fun NivaraApp(
     primaryCredentialService: PrimaryCredentialService,
     biometricAuthenticator: BiometricAuthenticator,
     sessionManager: SessionManager,
+    appLockMonitor: AppLockMonitor,
+    appLockMonitoringController: AppLockMonitoringController,
     applicationRepository: ApplicationRepository,
+    protectedApplicationRepository: ProtectedApplicationRepository,
+    applicationIconProvider: AndroidApplicationIconProvider,
     usageAccessRepository: UsageAccessRepository,
     overlayCapabilityRepository: OverlayCapabilityRepository,
 ) {
@@ -64,6 +73,23 @@ fun NivaraApp(
                 usageAccessRepository = usageAccessRepository,
                 overlayCapabilityRepository = overlayCapabilityRepository,
                 onBack = { navController.popBackStack() },
+                onManageProtectedApps = { navController.navigate(AppDestination.AppLockManagement.route) },
+            )
+        }
+        composable(AppDestination.AppLockManagement.route) {
+            AppLockManagementScreen(
+                applicationRepository = applicationRepository,
+                protectedApplicationRepository = protectedApplicationRepository,
+                usageAccessRepository = usageAccessRepository,
+                overlayCapabilityRepository = overlayCapabilityRepository,
+                primaryCredentialService = primaryCredentialService,
+                sessionManager = sessionManager,
+                appLockMonitor = appLockMonitor,
+                appLockMonitoringController = appLockMonitoringController,
+                applicationIconProvider = applicationIconProvider,
+                onBack = { navController.popBackStack() },
+                onOpenSetup = { navController.navigate(AppDestination.AppLockSetup.route) },
+                onReturnHomeForAuthentication = { navController.popBackStack(HOME, inclusive = false) },
             )
         }
         composable(SELECT_TYPE) {
