@@ -35,7 +35,9 @@ jobs:
           result=$?
           if (( result != 0 )); then
             tail -n 40 "$RUNNER_TEMP/gradle.log" >&2
-            diagnostic="$(tail -n 20 "$RUNNER_TEMP/gradle.log" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
-            echo "::error title=Gradle diagnostics::$diagnostic"
+            while IFS= read -r line; do
+              diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
+              echo "::error title=Gradle diagnostics::$diagnostic"
+            done < <(tail -n 40 "$RUNNER_TEMP/gradle.log")
           fi
           exit "$result"
