@@ -304,7 +304,7 @@ class DefaultVaultOrganizationRepositoryTest {
             return VaultOrganizationStorageResult.Created
         }
         fun replaceLatest(snapshot: VaultOrganizationSnapshot) {
-            val encoded = VaultOrganizationCodec.encode(vaultId, snapshot)
+            val encoded = VaultOrganizationCodec.encode(VaultId("00112233445566778899aabbccddeeff"), snapshot)
             records[snapshot.generation] = VaultOrganizationEnvelopeCodec.encode(snapshot.generation, encoded)
             encoded.fill(0)
             directoryMissing = false

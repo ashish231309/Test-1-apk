@@ -71,4 +71,3 @@ class DataStoreBiometricStateStoreTest {
             PreferenceDataStoreFactory.create(scope = scope, produceFile = { file }),
         )
 }
-}

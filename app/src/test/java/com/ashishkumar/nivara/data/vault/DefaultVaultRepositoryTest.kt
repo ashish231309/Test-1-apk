@@ -10,6 +10,7 @@ import com.ashishkumar.nivara.domain.security.SecureRandomSource
 import com.ashishkumar.nivara.domain.vault.VaultDirectoryEntry
 import com.ashishkumar.nivara.domain.vault.VaultFormatComponent
 import com.ashishkumar.nivara.domain.vault.VaultInitializationFailure
+import com.ashishkumar.nivara.domain.vault.VaultId
 import com.ashishkumar.nivara.domain.vault.VaultInitializationResult
 import com.ashishkumar.nivara.domain.vault.VaultMetadataCodec
 import com.ashishkumar.nivara.domain.vault.VaultMetadataDecode

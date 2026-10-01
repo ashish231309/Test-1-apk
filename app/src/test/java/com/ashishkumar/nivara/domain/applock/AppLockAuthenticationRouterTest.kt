@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -88,24 +89,26 @@ class AppLockAuthenticationRouterTest {
 
     @Test
     fun quickLockDuringPrimaryAuthenticationCannotRestoreTheSession() = withFixture { fixture ->
-        val started = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        fixture.primary.beforeReturn = {
-            started.complete(Unit)
-            release.await()
-        }
-        val attempt = async {
-            fixture.router.authenticatePrimary("secret".toCharArray()) { true }
-        }
+        coroutineScope {
+            val started = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            fixture.primary.beforeReturn = {
+                started.complete(Unit)
+                release.await()
+            }
+            val attempt = async {
+                fixture.router.authenticatePrimary("secret".toCharArray()) { true }
+            }
 
-        started.await()
-        fixture.sessionManager.lockNow()
-        release.complete(Unit)
-        val result = attempt.await() as AppLockAuthenticationRouteResult.Completed
+            started.await()
+            fixture.sessionManager.lockNow()
+            release.complete(Unit)
+            val result = attempt.await() as AppLockAuthenticationRouteResult.Completed<AuthenticationResult>
 
-        assertTrue(result.completion.outcome is AuthenticationResult.Authenticated)
-        assertEquals(false, result.completion.sessionEstablished)
-        assertEquals(SessionState.Unauthenticated, fixture.sessionManager.currentState())
+            assertTrue(result.completion.outcome is AuthenticationResult.Authenticated)
+            assertEquals(false, result.completion.sessionEstablished)
+            assertEquals(SessionState.Unauthenticated, fixture.sessionManager.currentState())
+        }
     }
 
     @Test
