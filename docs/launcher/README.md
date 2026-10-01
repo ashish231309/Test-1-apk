@@ -2,13 +2,13 @@
 
 ## Home activity and selection
 
-`LauncherActivity` is Nivara's one intentionally exported activity. Its only intent filter is `ACTION_MAIN` with `CATEGORY_HOME` and `CATEGORY_DEFAULT`; Android may invoke it as a Home activity. `MainActivity` remains the in-app Nivara settings/credential flow and is non-exported. Nivara does not change the user's default Home application.
+`LauncherActivity` is the one Android Home-role activity. Its Home filter remains `ACTION_MAIN` with `CATEGORY_HOME` and `CATEGORY_DEFAULT`; Android may invoke it as Home. The existing `MainActivity` also has a separate ordinary `ACTION_MAIN` + `CATEGORY_LAUNCHER` entry, with no Home category, so a user can open Nivara's existing settings/authentication flow from the app drawer for recovery whether Nivara is selected as Home or not. Both components use the fixed presentation label “Home”; neither component is aliased or disabled. Nivara does not change the user's default Home application.
 
 To select Nivara, use the device's normal **Settings → Apps → Default apps → Home app** screen (exact wording varies by Android and OEM). Leaving Nivara with Home, Back, or Recents remains under the platform's control.
 
 ## Home, settings, discovery, and drawer
 
-The home surface offers **Open app drawer**, **Nivara settings**, and **Show hidden apps for this session** controls. Settings opens the existing Nivara credential and management navigation through an explicit in-app intent; it has no external entry point. The home and drawer use the existing Material 3 theme and `SecureScreenEffect()`.
+The home surface is presented as **Home** and offers **Open app drawer**, **Nivara settings**, and **Show hidden apps for this session** controls. The settings button opens the existing Nivara credential and management navigation through an explicit in-app intent. If Nivara is not selected as Home, the ordinary app-drawer entry labelled **Home** launches that existing `MainActivity` as a recovery route. See [camouflage and recovery](../camouflage/README.md) for the component and security boundaries. The home and drawer use the existing Material 3 theme and `SecureScreenEffect()`.
 
 `LauncherViewModel` consumes the shared `ApplicationRepository`, `HiddenApplicationRepository`, and `SessionManager`. It does not scan packages or access persistence. The application catalogue preserves Stage 6 launchable-activity discovery and uses the existing deterministic `InstalledApplicationOrdering`. Search is deliberately omitted from this first drawer version; if added later it should reuse `InstalledApplicationSearch`.
 
@@ -34,4 +34,4 @@ Nivara remains compatible with Android 9 / API 28 and later; the launcher does n
 
 The Home intent filter requires no new runtime permission. The manifest retains the existing narrow launcher-activity visibility query and existing Stage 8 overlay permission; no `QUERY_ALL_PACKAGES`, accessibility, device-admin, or package-manager disabling mechanism is used. This launcher hides apps only from Nivara's own normal drawer; Android Settings, other launchers, package tools and privileged software remain outside its control.
 
-Search, final visual polish, Stage 12 camouflage/recovery, and release-level launcher compatibility work are out of scope. The Home chooser, Home resolution on real devices, external launches, icon rendering, lifecycle, session expiry and reveal behavior have not been runtime-verified without an Android device/emulator.
+Search and release-level launcher compatibility work remain out of scope. Stage 12's fixed identity and recovery route are documented separately; identity is presentation only and does not modify Home filtering. The Home chooser, Home resolution on real devices, external launches, icon rendering, lifecycle, session expiry and reveal behavior have not been runtime-verified without an Android device/emulator.

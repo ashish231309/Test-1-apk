@@ -150,11 +150,28 @@ def verify_launcher_manifest(manifest: ET.Element) -> None:
         for tag in ("activity", "activity-alias", "service", "receiver", "provider")
         for component in application.findall(tag)
     ]
+    main_entries = [
+        component for component in components
+        if component.tag == "activity" and component.get(ANDROID_NS + "name", "").endswith("MainActivity")
+    ]
+    require(len(main_entries) == 1, "the existing MainActivity must provide one ordinary recovery app entry")
+    main_activity = main_entries[0]
+    require(main_activity.get(ANDROID_NS + "exported") == "true",
+            "MainActivity must be externally launchable through the system app drawer")
+    main_filters = main_activity.findall("intent-filter")
+    require(len(main_filters) == 1, "MainActivity must expose only its ordinary app-drawer entry")
+    main_actions = {item.get(ANDROID_NS + "name", "") for item in main_filters[0].findall("action")}
+    main_categories = {item.get(ANDROID_NS + "name", "") for item in main_filters[0].findall("category")}
+    require(main_actions == {"android.intent.action.MAIN"} and
+            main_categories == {"android.intent.category.LAUNCHER"},
+            "MainActivity recovery must be a MAIN/LAUNCHER entry, not another Home or external route")
     explicitly_exported = [component for component in components if component.get(ANDROID_NS + "exported") == "true"]
-    require(explicitly_exported == [home_activity],
-            "the Home activity must be the only explicitly exported Nivara component")
+    require(set(explicitly_exported) == {home_activity, main_activity} and len(explicitly_exported) == 2,
+            "only LauncherActivity (Home role) and MainActivity (app-drawer recovery) may be exported")
+    require(not application.findall("activity-alias"),
+            "activity aliases are not used for identity camouflage or recovery")
     for component in components:
-        if component is not home_activity:
+        if component not in (home_activity, main_activity):
             require(component.get(ANDROID_NS + "exported") == "false",
                     f"unrelated {component.tag} components must remain explicitly non-exported")
             require(not component.findall("intent-filter"),
@@ -231,6 +248,112 @@ def verify_launcher_architecture(root: Path) -> None:
                 f"hidden-app domain must remain Android-free: {path.name}")
 
 
+def verify_camouflage_manifest(manifest: ET.Element, root: Path) -> None:
+    """Stage 12: fixed presentation identity and safe ordinary recovery entry."""
+    application = manifest.find("application")
+    require(application is not None, "manifest application declaration is missing")
+    identity = "@string/camouflage_identity_label"
+    icon = "@mipmap/camouflage_home"
+    require(application.get(ANDROID_NS + "label") == identity,
+            "application label must use the one fixed benign identity resource")
+    require(application.get(ANDROID_NS + "icon") == icon and application.get(ANDROID_NS + "roundIcon") == icon,
+            "application icons must use the fixed benign home icon")
+    require(not application.findall("activity-alias"),
+            "camouflage must not add activity aliases or component-state hiding")
+
+    activities = {item.get(ANDROID_NS + "name", ""): item for item in application.findall("activity")}
+    home = activities.get(".LauncherActivity")
+    recovery = activities.get(".MainActivity")
+    require(home is not None and recovery is not None,
+            "existing LauncherActivity and MainActivity must provide Home and recovery")
+    for component in (home, recovery):
+        require(component.get(ANDROID_NS + "label") == identity and component.get(ANDROID_NS + "icon") == icon,
+                "Home and recovery entries must share the selected fixed presentation identity")
+    require(recovery.get(ANDROID_NS + "exported") == "true",
+            "ordinary app-drawer recovery must be resolvable by Android")
+    launcher_filters = recovery.findall("intent-filter")
+    require(len(launcher_filters) == 1, "recovery must expose exactly one app-drawer filter")
+    actions = {node.get(ANDROID_NS + "name", "") for node in launcher_filters[0].findall("action")}
+    categories = {node.get(ANDROID_NS + "name", "") for node in launcher_filters[0].findall("category")}
+    require(actions == {"android.intent.action.MAIN"} and
+            categories == {"android.intent.category.LAUNCHER"},
+            "recovery must be ordinary MAIN/LAUNCHER and must not claim CATEGORY_HOME")
+    components = [component for tag in ("activity", "activity-alias", "service", "receiver", "provider")
+                  for component in application.findall(tag)]
+    exported = [component for component in components if component.get(ANDROID_NS + "exported") == "true"]
+    require(set(exported) == {home, recovery} and len(exported) == 2,
+            "only the existing Home activity and app-drawer recovery activity may be exported")
+    for component in components:
+        if component not in (home, recovery):
+            require(component.get(ANDROID_NS + "exported") == "false" and
+                    not component.findall("intent-filter"),
+                    "unrelated components must stay non-exported without external filters")
+
+    strings_path = root / "app/src/main/res/values/strings.xml"
+    strings = ET.parse(strings_path).getroot()
+    identity_string = next((item for item in strings.findall("string")
+                            if item.get("name") == "camouflage_identity_label"), None)
+    require(identity_string is not None and (identity_string.text or "").strip() == "Home",
+            "the only supported identity must be the fixed Home label")
+    adaptive_icon = root / "app/src/main/res/mipmap-anydpi-v26/camouflage_home.xml"
+    require(adaptive_icon.is_file(), "fixed neutral adaptive launcher icon is missing")
+
+    gradle = source(root / "app/build.gradle.kts")
+    require('namespace = "com.ashishkumar.nivara"' in gradle and
+            'applicationId = "com.ashishkumar.nivara"' in gradle,
+            "camouflage must preserve the Android namespace and application ID")
+    manifest_text = ET.tostring(manifest, encoding="unicode")
+    require("QUERY_ALL_PACKAGES" not in manifest_text and "queries" in manifest_text,
+            "camouflage must not broaden package visibility")
+    query_children = manifest.findall("queries/*")
+    queries = manifest.findall("queries/intent")
+    require(len(query_children) == 1 and len(queries) == 1,
+            "camouflage must preserve only the existing narrow launcher-visibility query")
+    query_actions = {n.get(ANDROID_NS + "name", "") for n in queries[0].findall("action")}
+    query_categories = {n.get(ANDROID_NS + "name", "") for n in queries[0].findall("category")}
+    require(query_actions == {"android.intent.action.MAIN"} and
+            query_categories == {"android.intent.category.LAUNCHER"},
+            "package visibility must remain limited to MAIN/LAUNCHER")
+
+
+def verify_camouflage_architecture(root: Path) -> None:
+    package = root / "app/src/main/java/com/ashishkumar/nivara"
+    main_activity = source(package / "MainActivity.kt")
+    for required in ("container.primaryCredentialService", "container.biometricAuthenticator(this)",
+                     "sessionManager = container.sessionManager", "NivaraApp("):
+        require(required in main_activity,
+                f"recovery must reuse existing MainActivity authentication/navigation wiring ({required})")
+    require(not re.search(r"\b(?:CamouflageRepository|IdentityProfileRepository|RecoveryCredential|"
+                          r"CamouflageSessionManager|recoveryAuthenticated|fakeAuthenticated)\b", main_activity),
+            "recovery must not add a repository, credential, or parallel/persisted session")
+
+    production_files = list(package.rglob("*.kt"))
+    forbidden_new_architecture = re.compile(
+        r"\b(?:CamouflageRepository|IdentityProfileRepository|IdentitySelectionViewModel|"
+        r"RecoveryCredentialStore|CamouflagePreferences|IdentityProfileStore|HiddenVault)\b"
+    )
+    for path in production_files:
+        text = source(path)
+        require(not forbidden_new_architecture.search(text),
+                f"camouflage must not add profile, auth, preference, or vault architecture: {path.relative_to(root)}")
+        require("setApplicationEnabledSetting" not in text and "setComponentEnabledSetting" not in text,
+                f"camouflage must not alter installed-app/component state: {path.relative_to(root)}")
+    for forbidden_dir in ("data/camouflage", "domain/camouflage", "ui/camouflage"):
+        require(not (package / forbidden_dir).exists(),
+                f"no new camouflage subsystem is permitted: {forbidden_dir}")
+
+    docs = source(root / "docs/camouflage/README.md").lower()
+    for required in ("fixed benign identity", "no profile", "when another app is selected",
+                     "after process recreation", "quick lock", "session expiry", "sessionmanager",
+                     "primary-credential/biometric", "does not provide invisibility", "not a security boundary",
+                     "android settings", "no new permission"):
+        require(required in docs,
+                f"camouflage recovery/security documentation must cover {required!r}")
+    readme = source(root / "README.md").lower()
+    for required in ("ordinary recovery entry", "not invisibility", "docs/camouflage/readme.md"):
+        require(required in readme, f"README must document Stage 12 {required!r}")
+
+
 def main() -> None:
     manifest_path = ROOT / "app/src/main/AndroidManifest.xml"
     try:
@@ -265,6 +388,8 @@ def main() -> None:
     require("BIND_DEVICE_ADMIN" not in manifest_text and "android.app.admin" not in manifest_text,
             "device-admin/device-owner APIs are out of scope")
     verify_launcher_manifest(manifest)
+    verify_camouflage_manifest(manifest, ROOT)
+    verify_camouflage_architecture(ROOT)
 
     query_intents = manifest.findall("queries/intent")
     require(
@@ -406,7 +531,7 @@ def main() -> None:
     readme = source(ROOT / "README.md").lower()
     for required in ("custom launcher", "app drawer", "normal home settings", "stage 12", "remain installed and functional"):
         require(required in readme, f"README must document {required!r}")
-    print("PASS: App Lock, hidden-app, launcher Home contract, persistence, auth boundaries, and permissions.")
+    print("PASS: App Lock, hidden-app, launcher and camouflage/recovery contracts, persistence, auth boundaries, and permissions.")
 
 
 if __name__ == "__main__":

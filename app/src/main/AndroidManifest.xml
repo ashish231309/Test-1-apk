@@ -22,18 +22,30 @@
     <application
         android:name=".NivaraApplication"
         android:allowBackup="false"
-        android:icon="@drawable/nivara_icon"
-        android:label="@string/app_name"
+        android:icon="@mipmap/camouflage_home"
+        android:label="@string/camouflage_identity_label"
+        android:roundIcon="@mipmap/camouflage_home"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
-            android:exported="false" />
+            android:exported="true"
+            android:icon="@mipmap/camouflage_home"
+            android:label="@string/camouflage_identity_label"
+            android:roundIcon="@mipmap/camouflage_home">
+            <!-- Ordinary app-drawer entry for recovery whether or not Nivara is the selected Home app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <activity
             android:name=".LauncherActivity"
             android:exported="true"
-            android:label="@string/app_name">
+            android:icon="@mipmap/camouflage_home"
+            android:label="@string/camouflage_identity_label"
+            android:roundIcon="@mipmap/camouflage_home">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.HOME" />

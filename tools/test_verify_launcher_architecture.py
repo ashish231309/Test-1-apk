@@ -148,15 +148,23 @@ class LauncherVerifierTest(unittest.TestCase):
     def _manifest(self) -> ET.Element:
         return ET.fromstring(
             f"""<manifest xmlns:android="{ANDROID_NS}">
-              <application>
-                <activity android:name=".LauncherActivity" android:exported="true">
+              <application android:label="@string/camouflage_identity_label"
+                           android:icon="@mipmap/camouflage_home" android:roundIcon="@mipmap/camouflage_home">
+                <activity android:name=".LauncherActivity" android:exported="true"
+                          android:label="@string/camouflage_identity_label" android:icon="@mipmap/camouflage_home">
                   <intent-filter>
                     <action android:name="android.intent.action.MAIN" />
                     <category android:name="android.intent.category.HOME" />
                     <category android:name="android.intent.category.DEFAULT" />
                   </intent-filter>
                 </activity>
-                <activity android:name=".MainActivity" android:exported="false" />
+                <activity android:name=".MainActivity" android:exported="true"
+                          android:label="@string/camouflage_identity_label" android:icon="@mipmap/camouflage_home">
+                  <intent-filter>
+                    <action android:name="android.intent.action.MAIN" />
+                    <category android:name="android.intent.category.LAUNCHER" />
+                  </intent-filter>
+                </activity>
                 <activity android:name=".data.applock.AppLockBiometricActivity" android:exported="false" />
                 <service android:name=".data.applock.AppLockDetectionService" android:exported="false" />
               </application>

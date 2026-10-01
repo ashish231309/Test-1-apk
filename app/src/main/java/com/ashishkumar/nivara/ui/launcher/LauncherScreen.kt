@@ -108,7 +108,7 @@ private fun LauncherHome(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("Nivara", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
+        Text("Home", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
         Text(
             modifier = Modifier.padding(top = 8.dp, bottom = 28.dp),
             text = "Your home for the applications you choose to show here.",
