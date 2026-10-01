@@ -52,6 +52,7 @@ fun CredentialHomeScreen(
     onChange: (PrimaryCredentialType) -> Unit,
     onEnableBiometric: (PrimaryCredentialType) -> Unit,
     onDisableBiometric: (PrimaryCredentialType) -> Unit,
+    onPrepareAppLock: () -> Unit,
 ) {
     SecureScreenEffect()
     var status by remember { mutableStateOf<CredentialServiceStatus?>(null) }
@@ -146,6 +147,9 @@ fun CredentialHomeScreen(
                     color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,
                 )
+            }
+            OutlinedButton(modifier = Modifier.padding(top = 16.dp), onClick = onPrepareAppLock) {
+                Text("Prepare App Lock")
             }
         }
     }

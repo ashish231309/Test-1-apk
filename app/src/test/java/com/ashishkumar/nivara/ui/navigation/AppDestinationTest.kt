@@ -8,4 +8,9 @@ class AppDestinationTest {
     fun homeDestinationUsesStableRoute() {
         assertEquals("home", AppDestination.Home.route)
     }
+
+    @Test
+    fun appLockSetupDestinationUsesStableRoute() {
+        assertEquals("app-lock/setup", AppDestination.AppLockSetup.route)
+    }
 }

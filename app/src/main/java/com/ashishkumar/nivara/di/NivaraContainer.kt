@@ -7,6 +7,10 @@ import androidx.fragment.app.FragmentActivity
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import com.ashishkumar.nivara.data.credentials.DataStorePrimaryCredentialStore
+import com.ashishkumar.nivara.data.app.AndroidApplicationRepository
+import com.ashishkumar.nivara.data.permissions.AndroidUsageAccessRepository
+import com.ashishkumar.nivara.domain.app.ApplicationRepository
+import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
 import com.ashishkumar.nivara.data.credentials.SystemCredentialClock
 import com.ashishkumar.nivara.data.biometrics.AndroidBiometricPromptPlatform
 import com.ashishkumar.nivara.data.biometrics.DataStoreBiometricStateStore
@@ -44,6 +48,8 @@ interface NivaraContainer {
     val credentialStore: PrimaryCredentialStore
     val primaryCredentialService: PrimaryCredentialService
     val sessionManager: SessionManager
+    val applicationRepository: ApplicationRepository
+    val usageAccessRepository: UsageAccessRepository
     fun biometricAuthenticator(activity: FragmentActivity): BiometricAuthenticator
 }
 
@@ -55,6 +61,12 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
     override val keyWrapping: KeyWrappingService by lazy { AesGcmKeyWrappingService(encryption) }
     override val credentialKeyDeriver: CredentialKeyDeriver by lazy { JcaCredentialKeyDeriver(secureRandom) }
     override val deviceKeyStore: DeviceKeyStore by lazy { AndroidKeyStoreKeyManager() }
+    override val applicationRepository: ApplicationRepository by lazy {
+        AndroidApplicationRepository(applicationContext)
+    }
+    override val usageAccessRepository: UsageAccessRepository by lazy {
+        AndroidUsageAccessRepository(applicationContext)
+    }
 
     private val biometricPreferencesDataStore: DataStore<Preferences> by lazy {
         PreferenceDataStoreFactory.create(

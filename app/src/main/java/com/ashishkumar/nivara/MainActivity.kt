@@ -20,7 +20,13 @@ class MainActivity : FragmentActivity() {
         val biometricAuthenticator = container.biometricAuthenticator(this)
         setContent {
             NivaraTheme {
-                NivaraApp(container.primaryCredentialService, biometricAuthenticator, container.sessionManager)
+                NivaraApp(
+                    primaryCredentialService = container.primaryCredentialService,
+                    biometricAuthenticator = biometricAuthenticator,
+                    sessionManager = container.sessionManager,
+                    applicationRepository = container.applicationRepository,
+                    usageAccessRepository = container.usageAccessRepository,
+                )
             }
         }
     }

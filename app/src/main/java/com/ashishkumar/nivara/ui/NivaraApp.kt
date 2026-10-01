@@ -12,20 +12,26 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.ashishkumar.nivara.domain.app.ApplicationRepository
 import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticator
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
+import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
 import com.ashishkumar.nivara.domain.security.session.SessionManager
 import com.ashishkumar.nivara.ui.credentials.CredentialEditorScreen
 import com.ashishkumar.nivara.ui.credentials.CredentialFlowMode
 import com.ashishkumar.nivara.ui.credentials.CredentialHomeScreen
 import com.ashishkumar.nivara.ui.credentials.CredentialTypeSelectionScreen
+import com.ashishkumar.nivara.ui.navigation.AppDestination
+import com.ashishkumar.nivara.ui.setup.AppLockSetupScreen
 
 @Composable
 fun NivaraApp(
     primaryCredentialService: PrimaryCredentialService,
     biometricAuthenticator: BiometricAuthenticator,
     sessionManager: SessionManager,
+    applicationRepository: ApplicationRepository,
+    usageAccessRepository: UsageAccessRepository,
 ) {
     val navController = rememberNavController()
     var homeRefreshKey by remember { mutableIntStateOf(0) }
@@ -47,6 +53,14 @@ fun NivaraApp(
                 onChange = { type -> navController.navigate("$CHANGE/${type.storageValue}") },
                 onEnableBiometric = { type -> navController.navigate("$BIOMETRIC_ENABLE/${type.storageValue}") },
                 onDisableBiometric = { type -> navController.navigate("$BIOMETRIC_DISABLE/${type.storageValue}") },
+                onPrepareAppLock = { navController.navigate(AppDestination.AppLockSetup.route) },
+            )
+        }
+        composable(AppDestination.AppLockSetup.route) {
+            AppLockSetupScreen(
+                applicationRepository = applicationRepository,
+                usageAccessRepository = usageAccessRepository,
+                onBack = { navController.popBackStack() },
             )
         }
         composable(SELECT_TYPE) {
