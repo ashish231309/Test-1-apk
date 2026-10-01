@@ -1,5 +1,6 @@
 package com.ashishkumar.nivara.data.applock
 
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -25,6 +26,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /** Owns the existing monitor service and coordinates the process-scoped presentation consumer. */
+// The notification is the required foreground-service notice; Android exempts it from POST_NOTIFICATIONS.
+@SuppressLint("NotificationPermission")
 class AppLockDetectionService : Service() {
     private val appLockMonitor: AppLockMonitor
         get() = (application as NivaraApplication).container.appLockMonitor
