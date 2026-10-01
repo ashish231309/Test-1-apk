@@ -38,6 +38,7 @@ class DefaultVaultImportRepositoryTest {
         val fixture = Fixture()
         val sourceBytes = ByteArray(150_123) { (it and 0xff).toByte() }
         fixture.sources.bytes = sourceBytes
+        fixture.sources.metadataValue = VaultSourceMetadata("document.pdf", "application/pdf", sourceBytes.size.toLong())
         val sourceSnapshot = sourceBytes.copyOf()
         val result = fixture.repository.importDocument(sourceId, vaultId, { true }, { _, _ -> })
         assertTrue(result is VaultImportResult.Imported)

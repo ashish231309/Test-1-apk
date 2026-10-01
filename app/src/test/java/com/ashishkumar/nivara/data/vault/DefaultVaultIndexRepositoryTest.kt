@@ -71,8 +71,9 @@ class DefaultVaultIndexRepositoryTest {
     @Test fun corruptLatestDoesNotFallBackToAnOlderValidGeneration() = runBlocking {
         val storage = MemoryContentStorage()
         val repository = DefaultVaultIndexRepository(storage, PassThroughContentCrypto())
-        repository.initializeEmpty(vaultId) { true }
-        repository.addItem(vaultId, item("00000000000000000000000000000001")) { true }
+        assertEquals(VaultIndexInitializationResult.Initialized, repository.initializeEmpty(vaultId) { true })
+        assertTrue(repository.addItem(vaultId, item("00000000000000000000000000000001")) { true } is VaultIndexWriteResult.Added)
+        assertTrue(storage.snapshots.containsKey(1L))
         storage.snapshots.getValue(1).let { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
         assertEquals(VaultIndexRead.Corrupt, repository.inspect(vaultId))
     }
