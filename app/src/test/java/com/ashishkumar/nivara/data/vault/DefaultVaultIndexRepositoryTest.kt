@@ -79,7 +79,12 @@ class DefaultVaultIndexRepositoryTest {
         val storage = MemoryContentStorage()
         val repository = DefaultVaultIndexRepository(storage, PassThroughContentCrypto())
         val initialized = repository.initializeEmpty(vaultId) { true }
-        assertEquals("files=${storage.inspectIndexFiles()} read=${repository.inspect(vaultId)} snapshots=${storage.snapshots.keys}",
+        val stored = storage.snapshots[0L]
+        val storedEnvelope = stored?.let(VaultIndexEnvelopeCodec::decode)
+        val storedPlaintext = (storedEnvelope as? VaultIndexEnvelopeCodec.DecodeResult.Valid)?.value?.encryptedRecord
+        val storedIndex = storedPlaintext?.let(VaultIndexCodec::decode)
+        assertEquals("init=$initialized files=${storage.inspectIndexFiles()} read=${repository.inspect(vaultId)} " +
+            "envelope=$storedEnvelope index=$storedIndex snapshots=${storage.snapshots.keys}",
             VaultIndexInitializationResult.Initialized, initialized)
         assertTrue(repository.addItem(vaultId, item("00000000000000000000000000000001")) { true } is VaultIndexWriteResult.Added)
         assertTrue(storage.snapshots.containsKey(1L))
