@@ -162,12 +162,13 @@ class DefaultVaultOrganizationRepositoryTest {
     @Test fun readbackAuthenticationFailureRollsBackOnlyTheUnverifiedGeneration() = runBlocking {
         val h = Harness()
         val albumId = (h.repo.createAlbum(vaultId, "Prior") { true } as VaultAlbumMutationResult.Changed).albumId!!
+        val pruneCallsBeforeUnverifiedWrite = h.storage.pruneCalls
         h.storage.tamperNextCommit = true
         assertEquals(VaultAlbumMutationResult.Corrupt,
             h.repo.renameAlbum(vaultId, albumId, "Unverified") { true })
         assertEquals(setOf(1L), h.storage.records.keys)
         assertEquals("Prior", (h.repo.inspect(vaultId) as VaultOrganizationRead.Ready).snapshot.albums.single().name)
-        assertEquals(0, h.storage.pruneCalls)
+        assertEquals(pruneCallsBeforeUnverifiedWrite, h.storage.pruneCalls)
     }
 
     @Test fun failedRollbackLeavesPriorGenerationAndCorruptionVisibleRatherThanEmpty() = runBlocking {
