@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static checks for Nivara's App Lock, hidden-app, and permission boundaries."""
+"""Static checks for Nivara's App Lock, hidden-app, launcher, and permission boundaries."""
 
 from __future__ import annotations
 
@@ -120,6 +120,117 @@ def verify_hidden_architecture(root: Path) -> None:
             "Stage 9 App Lock management must remain independent of hidden state")
 
 
+def verify_launcher_manifest(manifest: ET.Element) -> None:
+    application = manifest.find("application")
+    require(application is not None, "manifest application declaration is missing")
+    activities = application.findall("activity")
+    home_filters: list[tuple[ET.Element, ET.Element, set[str], set[str]]] = []
+    for activity in activities:
+        for intent_filter in activity.findall("intent-filter"):
+            actions = {item.get(ANDROID_NS + "name", "") for item in intent_filter.findall("action")}
+            categories = {item.get(ANDROID_NS + "name", "") for item in intent_filter.findall("category")}
+            if "android.intent.category.HOME" in categories:
+                home_filters.append((activity, intent_filter, actions, categories))
+
+    require(len(home_filters) == 1, "exactly one activity must declare the Android Home intent")
+    home_activity, home_filter, actions, categories = home_filters[0]
+    require(home_activity.get(ANDROID_NS + "name", "").endswith("LauncherActivity"),
+            "the sole Home intent must belong to LauncherActivity")
+    require(home_activity.get(ANDROID_NS + "exported") == "true",
+            "the Home activity must be explicitly exported for Android to invoke it")
+    require(actions == {"android.intent.action.MAIN"},
+            "the Home activity must expose only ACTION_MAIN")
+    require(categories == {"android.intent.category.HOME", "android.intent.category.DEFAULT"},
+            "the Home filter must contain exactly CATEGORY_HOME and CATEGORY_DEFAULT")
+    require(len(home_activity.findall("intent-filter")) == 1,
+            "the exported Home activity must not expose unrelated intent filters")
+
+    components = [
+        component
+        for tag in ("activity", "activity-alias", "service", "receiver", "provider")
+        for component in application.findall(tag)
+    ]
+    explicitly_exported = [component for component in components if component.get(ANDROID_NS + "exported") == "true"]
+    require(explicitly_exported == [home_activity],
+            "the Home activity must be the only explicitly exported Nivara component")
+    for component in components:
+        if component is not home_activity:
+            require(component.get(ANDROID_NS + "exported") == "false",
+                    f"unrelated {component.tag} components must remain explicitly non-exported")
+            require(not component.findall("intent-filter"),
+                    f"unrelated {component.tag} components must not add launcher or external intent filters")
+
+
+def verify_launcher_architecture(root: Path) -> None:
+    package = root / "app/src/main/java/com/ashishkumar/nivara"
+    view_model_path = package / "ui/launcher/LauncherViewModel.kt"
+    screen_path = package / "ui/launcher/LauncherScreen.kt"
+    activity_path = package / "LauncherActivity.kt"
+    view_model = view_model_path.read_text(encoding="utf-8")
+    screen = screen_path.read_text(encoding="utf-8")
+    activity = activity_path.read_text(encoding="utf-8")
+    require("ApplicationRepository" in view_model and "HiddenApplicationRepository" in view_model,
+            "launcher presentation must consume the existing discovery and hidden-state contracts")
+    require("sessionManager.currentState()" in view_model and "sessionManager.lockNow()" in view_model,
+            "temporary reveal and Quick Lock must use the existing SessionManager")
+    require("sessionManager.sessionState.value === revealSession" in view_model,
+            "temporary reveal must be bound to the exact live SessionManager session")
+    require("hiddenApplicationRepository.getHiddenApplications()" in view_model,
+            "launcher must refresh hidden state from HiddenApplicationRepository")
+    require(not re.search(r"hiddenApplicationRepository\.(?:hide|unhide)\s*\(", view_model),
+            "temporary reveal must never mutate persistent hidden preferences")
+    require("InstalledApplicationOrdering.deterministic" in view_model,
+            "launcher must reuse the existing application ordering")
+    require("HiddenApplicationsSnapshot.Unreadable" in view_model and
+            "HiddenApplicationsSnapshot.Unavailable" in view_model and
+            "ApplicationDiscoveryResult.Unavailable" in view_model,
+            "launcher must distinguish repository and discovery failure states")
+
+    forbidden_storage = re.compile(
+        r"\b(?:AtomicFile|AtomicFiles|FileInputStream|FileOutputStream|HiddenApplicationsCodec|"
+        r"HiddenApplicationFileStore|AndroidAtomicHiddenApplicationStore|DataStore|SharedPreferences)\b"
+    )
+    forbidden_auth = re.compile(r"\b(?:PrimaryCredentialService|BiometricAuthenticator|BiometricPrompt)\b")
+    forbidden_scanner = re.compile(
+        r"\b(?:queryIntentActivities|queryIntentServices|queryBroadcastReceivers|getInstalledApplications|"
+        r"getInstalledPackages|getPackagesHoldingPermissions|AccessibilityService)\b"
+    )
+    forbidden_reveal_cache = re.compile(r"\b(?:unhiddenApps|revealedAppsStore|persistentReveal|launcherRevealDataStore)\b")
+    for path, text in ((view_model_path, view_model), (screen_path, screen), (activity_path, activity)):
+        require(not forbidden_storage.search(text),
+                f"launcher UI must not access persistence directly: {path.name}")
+        require(not forbidden_auth.search(text),
+                f"launcher must not implement a second authentication authority: {path.name}")
+        require(not forbidden_scanner.search(text),
+                f"launcher must not add a PackageManager scanner or accessibility discovery: {path.name}")
+        require(not forbidden_reveal_cache.search(text),
+                f"temporary reveal must not become a launcher-specific persistent list: {path.name}")
+        require("Log." not in text and "println(" not in text,
+                f"package identities must not be logged: {path.name}")
+    require("SecureScreenEffect()" in screen,
+            "launcher screen must use screenshot protection while temporary reveal is available")
+    require("SessionState.Authenticated" in screen and "hiddenApplicationsRevealed" in screen,
+            "launcher UI must immediately gate a revealed snapshot on the live SessionManager state")
+    require("AndroidApplicationIconProvider" in screen,
+            "launcher must reuse the shared application icon provider")
+    require("getLaunchIntentForPackage(application.packageName)" in activity,
+            "application launch must resolve the exact discovered package through PackageManager")
+    require("Intent(this, MainActivity::class.java)" in activity,
+            "launcher must provide a normal explicit route to Nivara settings/authentication")
+    require("getStringExtra" not in activity and "putExtra(" not in activity,
+            "launcher must not accept package identities or sensitive state from external Intent extras")
+    require(not re.search(r"\b(?:rememberSaveable|onSaveInstanceState|SharedPreferences|DataStore)\b", screen + view_model + activity),
+            "temporary hidden-app reveal must remain non-persistent")
+    require(not re.search(r"ProtectedApplicationRepository|setProtected\s*\(|unprotect\s*\(", view_model + screen),
+            "launcher presentation must not mutate App Lock protected state")
+
+    domain_files = (package / "domain/apphide").glob("*.kt")
+    for path in domain_files:
+        text = path.read_text(encoding="utf-8")
+        require(not re.search(r"^\s*import\s+android\.", text, re.MULTILINE),
+                f"hidden-app domain must remain Android-free: {path.name}")
+
+
 def main() -> None:
     manifest_path = ROOT / "app/src/main/AndroidManifest.xml"
     try:
@@ -153,8 +264,7 @@ def main() -> None:
             "accessibility APIs/services are out of scope")
     require("BIND_DEVICE_ADMIN" not in manifest_text and "android.app.admin" not in manifest_text,
             "device-admin/device-owner APIs are out of scope")
-    require("android.intent.category.HOME" not in manifest_text and "android.intent.category.DEFAULT" not in manifest_text,
-            "Stage 10 must not register a home/default launcher activity")
+    verify_launcher_manifest(manifest)
 
     query_intents = manifest.findall("queries/intent")
     require(
@@ -286,10 +396,17 @@ def main() -> None:
         require(required in docs, f"App Lock documentation must cover {required!r}")
 
     verify_hidden_architecture(ROOT)
+    verify_launcher_architecture(ROOT)
     hidden_docs = source(ROOT / "docs/apphide/README.md").lower()
     for required in ("hiddenapplicationrepository", "unreadable", "atomicfile", "sessionmanager", "stage 11", "stock launcher", "cryptographically secret"):
         require(required in hidden_docs, f"hidden-app documentation must cover {required!r}")
-    print("PASS: App Lock and hidden-app permissions, persistence, auth boundaries, navigation, and documentation.")
+    launcher_docs = source(ROOT / "docs/launcher/README.md").lower()
+    for required in ("category_home", "hiddenapplicationrepository", "fail-closed", "temporary", "quick lock", "settings", "api 28"):
+        require(required in launcher_docs, f"launcher documentation must cover {required!r}")
+    readme = source(ROOT / "README.md").lower()
+    for required in ("custom launcher", "app drawer", "normal home settings", "stage 12", "remain installed and functional"):
+        require(required in readme, f"README must document {required!r}")
+    print("PASS: App Lock, hidden-app, launcher Home contract, persistence, auth boundaries, and permissions.")
 
 
 if __name__ == "__main__":
