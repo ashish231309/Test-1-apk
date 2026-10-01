@@ -24,7 +24,7 @@
     <string name="cancel">Cancel</string>
     <string name="done">Done</string>
     <string name="app_lock_monitor_channel_name">App Lock monitoring</string>
-    <string name="app_lock_monitor_channel_description">Visible status for Nivara's selected-app protection monitoring.</string>
+    <string name="app_lock_monitor_channel_description">Visible status for Nivara\'s selected-app protection monitoring.</string>
     <string name="app_lock_monitor_notification_title">Nivara App Lock</string>
     <string name="app_lock_monitor_starting">Starting protection monitoring.</string>
     <string name="app_lock_monitor_active">Protection monitoring is active.</string>

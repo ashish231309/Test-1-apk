@@ -35,7 +35,7 @@ jobs:
           result=$?
           if (( result != 0 )); then
             tail -n 40 "$RUNNER_TEMP/gradle.log" >&2
-            grep -E '(^e: |^FAILURE:|^\* What went wrong:|^Execution failed for task|^> Task .*FAILED|^Caused by:|AssertionError|expected:<|but was:<|There were failing tests|Compilation error)' "$RUNNER_TEMP/gradle.log" | tail -n 40 | while IFS= read -r line; do
+            grep -E '(^e: |^FAILURE:|^\* What went wrong:|^Execution failed for task|^> Task .*FAILED|^Caused by:|AssertionError|expected:<|but was:<|There were failing tests|Compilation error|error: )' "$RUNNER_TEMP/gradle.log" | tail -n 40 | while IFS= read -r line; do
               diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
               echo "::error title=Gradle diagnostics::$diagnostic"
             done
