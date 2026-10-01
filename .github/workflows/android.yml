@@ -39,5 +39,21 @@ jobs:
               diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
               echo "::error title=Gradle diagnostics::$diagnostic"
             done
+            python3 - <<'PY' > "$RUNNER_TEMP/test-failures.txt"
+          import pathlib
+          import xml.etree.ElementTree as ET
+
+          for report in pathlib.Path('app/build/test-results/testDebugUnitTest').glob('TEST-*.xml'):
+              root = ET.parse(report).getroot()
+              for test in root.iter('testcase'):
+                  for failure in list(test.findall('failure')) + list(test.findall('error')):
+                      print(f"{test.get('classname')}#{test.get('name')}: {failure.get('message', '')}")
+                      for line in (failure.text or '').splitlines()[-6:]:
+                          print(line)
+          PY
+            while IFS= read -r line; do
+              diagnostic="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
+              echo "::error title=JVM test diagnostics::$diagnostic"
+            done < "$RUNNER_TEMP/test-failures.txt"
           fi
           exit "$result"
