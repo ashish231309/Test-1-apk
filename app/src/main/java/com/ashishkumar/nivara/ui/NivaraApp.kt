@@ -15,6 +15,7 @@ import androidx.navigation.navArgument
 import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticator
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
+import com.ashishkumar.nivara.domain.security.session.SessionManager
 import com.ashishkumar.nivara.ui.credentials.CredentialEditorScreen
 import com.ashishkumar.nivara.ui.credentials.CredentialFlowMode
 import com.ashishkumar.nivara.ui.credentials.CredentialHomeScreen
@@ -24,6 +25,7 @@ import com.ashishkumar.nivara.ui.credentials.CredentialTypeSelectionScreen
 fun NivaraApp(
     primaryCredentialService: PrimaryCredentialService,
     biometricAuthenticator: BiometricAuthenticator,
+    sessionManager: SessionManager,
 ) {
     val navController = rememberNavController()
     var homeRefreshKey by remember { mutableIntStateOf(0) }
@@ -38,6 +40,7 @@ fun NivaraApp(
             CredentialHomeScreen(
                 service = primaryCredentialService,
                 biometricAuthenticator = biometricAuthenticator,
+                sessionManager = sessionManager,
                 refreshKey = homeRefreshKey,
                 onEnroll = { navController.navigate(SELECT_TYPE) },
                 onVerify = { type -> navController.navigate("$VERIFY/${type.storageValue}") },
@@ -61,6 +64,7 @@ fun NivaraApp(
             else CredentialEditorScreen(
                 service = primaryCredentialService,
                 biometricAuthenticator = biometricAuthenticator,
+                sessionManager = sessionManager,
                 mode = CredentialFlowMode.ENROLL,
                 type = type,
                 onBack = { navController.popBackStack() },
@@ -76,6 +80,7 @@ fun NivaraApp(
             else CredentialEditorScreen(
                 service = primaryCredentialService,
                 biometricAuthenticator = biometricAuthenticator,
+                sessionManager = sessionManager,
                 mode = CredentialFlowMode.VERIFY,
                 type = type,
                 onBack = { navController.popBackStack() },
@@ -91,6 +96,7 @@ fun NivaraApp(
             else CredentialEditorScreen(
                 service = primaryCredentialService,
                 biometricAuthenticator = biometricAuthenticator,
+                sessionManager = sessionManager,
                 mode = CredentialFlowMode.CHANGE,
                 type = type,
                 onBack = { navController.popBackStack() },
@@ -106,6 +112,7 @@ fun NivaraApp(
             else CredentialEditorScreen(
                 service = primaryCredentialService,
                 biometricAuthenticator = biometricAuthenticator,
+                sessionManager = sessionManager,
                 mode = CredentialFlowMode.BIOMETRIC_ENABLE,
                 type = type,
                 onBack = { navController.popBackStack() },
@@ -121,6 +128,7 @@ fun NivaraApp(
             else CredentialEditorScreen(
                 service = primaryCredentialService,
                 biometricAuthenticator = biometricAuthenticator,
+                sessionManager = sessionManager,
                 mode = CredentialFlowMode.BIOMETRIC_DISABLE,
                 type = type,
                 onBack = { navController.popBackStack() },

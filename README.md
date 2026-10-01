@@ -1,6 +1,6 @@
 # Nivara
 
-Nivara is a native Android application intended to provide a privacy and security workspace. Current authentication supports one primary PIN, password, or pattern, plus optional AndroidX biometric authentication as a secondary convenience method. Vault, recovery, sessions/app lock, and other later-stage features remain out of scope.
+Nivara is a native Android application intended to provide a privacy and security workspace. Authentication supports one primary PIN, password, or pattern, optional AndroidX biometric authentication as a secondary convenience method, and one in-memory session with an absolute timeout and Quick Lock. Vault, recovery, App Lock detection/overlays, and other later-stage features remain out of scope.
 
 ## Technology
 
@@ -24,7 +24,7 @@ The debug APK is written to `app/build/outputs/apk/debug/`. Run `./gradlew conne
 
 ## Security foundation
 
-Core cryptography, credential verification, persistence boundaries, and the current envelope/KDF design are documented in [SECURITY.md](SECURITY.md). The app persists one primary credential configuration and separate biometric enablement/throttling metadata. It does not store credentials, biometric templates, raw biometric Keystore keys, or a plaintext verifier.
+Core cryptography, credential verification, session boundaries, persistence, and the envelope/KDF design are documented in [SECURITY.md](SECURITY.md). The app persists one primary credential configuration and separate biometric enablement/throttling metadata. Session state exists only in process memory and is discarded on process recreation; credentials, biometric templates, raw biometric Keystore keys, and a plaintext verifier are not stored.
 
 ## Project structure
 

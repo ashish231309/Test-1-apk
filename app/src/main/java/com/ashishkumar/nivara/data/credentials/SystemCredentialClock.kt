@@ -1,8 +1,11 @@
 package com.ashishkumar.nivara.data.credentials
 
-import com.ashishkumar.nivara.domain.credentials.CredentialClock
+import android.os.SystemClock
+import com.ashishkumar.nivara.domain.security.TimeProvider
 
-/** Wall time is used only for persisted temporary throttling, never for cryptographic material. */
-class SystemCredentialClock : CredentialClock {
+/** Shared system clock: wall time for persisted throttling, monotonic elapsed realtime for memory-only sessions. */
+class SystemCredentialClock : TimeProvider {
     override fun nowEpochMillis(): Long = System.currentTimeMillis()
+
+    override fun nowElapsedRealtimeMillis(): Long = SystemClock.elapsedRealtime()
 }

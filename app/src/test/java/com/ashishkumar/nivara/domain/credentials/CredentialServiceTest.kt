@@ -1,5 +1,7 @@
 package com.ashishkumar.nivara.domain.credentials
 
+import com.ashishkumar.nivara.domain.security.TimeProvider
+
 import com.ashishkumar.nivara.data.security.AesGcmKeyWrappingService
 import com.ashishkumar.nivara.data.security.JcaAesGcmEncryption
 import com.ashishkumar.nivara.data.security.JcaCredentialKeyDeriver
@@ -211,7 +213,7 @@ class CredentialServiceTest {
     @Test
     fun failedAttemptsThrottleTemporarilyAndSuccessResetsTracking() = runBlocking {
         val store = InMemoryCredentialStore()
-        val clock = TestCredentialClock()
+        val clock = TestTimeProvider()
         val service = service(store, clock)
         service.enroll(PrimaryCredentialType.PASSWORD, chars("A secure test phrase"), chars("A secure test phrase"))
 
@@ -244,7 +246,7 @@ class CredentialServiceTest {
 
     private fun service(
         store: InMemoryCredentialStore,
-        clock: TestCredentialClock = TestCredentialClock(),
+        clock: TestTimeProvider = TestTimeProvider(),
     ): DefaultPrimaryCredentialService {
         val random = JcaSecureRandomSource()
         return DefaultPrimaryCredentialService(
@@ -258,7 +260,7 @@ class CredentialServiceTest {
 
     private fun chars(value: String): CharArray = value.toCharArray()
 
-    private class TestCredentialClock(var now: Long = 100_000L) : CredentialClock {
+    private class TestTimeProvider(var now: Long = 100_000L) : TimeProvider {
         override fun nowEpochMillis(): Long = now
     }
 

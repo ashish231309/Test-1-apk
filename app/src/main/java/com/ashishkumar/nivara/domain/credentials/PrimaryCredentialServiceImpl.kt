@@ -10,6 +10,7 @@ import com.ashishkumar.nivara.domain.security.SecureRandomSource
 import com.ashishkumar.nivara.domain.security.SecurityFailure
 import com.ashishkumar.nivara.domain.security.SensitiveBytes
 import com.ashishkumar.nivara.domain.security.WrappedKeyEnvelope
+import com.ashishkumar.nivara.domain.security.TimeProvider
 import kotlinx.coroutines.CancellationException
 
 /** Domain use case built only from Stage 2 security contracts and the credential-store boundary. */
@@ -18,7 +19,7 @@ class DefaultPrimaryCredentialService(
     private val keyDeriver: CredentialKeyDeriver,
     private val keyWrapping: KeyWrappingService,
     private val random: SecureRandomSource,
-    private val clock: CredentialClock,
+    private val clock: TimeProvider,
 ) : PrimaryCredentialService {
     override suspend fun status(): CredentialServiceStatus = try {
         val configuration = store.load()

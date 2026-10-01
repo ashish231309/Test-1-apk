@@ -93,10 +93,6 @@ interface PrimaryCredentialStore {
     suspend fun resetAttempts()
 }
 
-fun interface CredentialClock {
-    fun nowEpochMillis(): Long
-}
-
 interface PrimaryCredentialService {
     suspend fun status(): CredentialServiceStatus
 

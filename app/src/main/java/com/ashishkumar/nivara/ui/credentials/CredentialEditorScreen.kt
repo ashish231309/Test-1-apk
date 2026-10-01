@@ -1,7 +1,5 @@
 package com.ashishkumar.nivara.ui.credentials
 
-import android.app.Activity
-import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,7 +17,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,7 +24,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.password
@@ -50,6 +46,8 @@ import com.ashishkumar.nivara.domain.credentials.InvalidCredentialInput
 import com.ashishkumar.nivara.domain.credentials.PatternCanonicalizer
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
+import com.ashishkumar.nivara.domain.security.session.SessionManager
+import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -59,16 +57,13 @@ internal enum class CredentialFlowMode { ENROLL, VERIFY, CHANGE, BIOMETRIC_ENABL
 internal fun CredentialEditorScreen(
     service: PrimaryCredentialService,
     biometricAuthenticator: BiometricAuthenticator,
+    sessionManager: SessionManager,
     mode: CredentialFlowMode,
     type: PrimaryCredentialType,
     onBack: () -> Unit,
     onDone: () -> Unit,
 ) {
-    val activity = LocalContext.current as? Activity
-    DisposableEffect(activity) {
-        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
-    }
+    SecureScreenEffect()
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     var busy by remember { mutableStateOf(false) }
@@ -107,10 +102,19 @@ internal fun CredentialEditorScreen(
                     CredentialFlowMode.VERIFY -> {
                         val submitted = toCredentialChars(type, currentText, currentPattern)
                         currentChars = submitted
-                        when (val result = biometricAuthenticator.authenticatePrimaryFallback(submitted)) {
+                        val completion = sessionManager.authenticatePrimary {
+                            biometricAuthenticator.authenticatePrimaryFallback(submitted)
+                        }
+                        val result = completion.outcome
+                        when (result) {
                             is AuthenticationResult.Authenticated -> {
-                                success = true
-                                message = "Credential verified successfully."
+                                if (completion.sessionEstablished) {
+                                    success = true
+                                    message = "Authentication session started."
+                                    onDone()
+                                } else {
+                                    message = "Authentication was superseded by a lock. Verify again to continue."
+                                }
                             }
                             AuthenticationResult.Failed -> message = "The credential was not accepted."
                             is AuthenticationResult.TemporarilyBlocked -> {

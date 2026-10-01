@@ -1,8 +1,9 @@
 package com.ashishkumar.nivara.domain.biometrics
 
+import com.ashishkumar.nivara.domain.security.TimeProvider
+
 import com.ashishkumar.nivara.domain.credentials.AuthenticationResult
 import com.ashishkumar.nivara.domain.credentials.CredentialChangeResult
-import com.ashishkumar.nivara.domain.credentials.CredentialClock
 import com.ashishkumar.nivara.domain.credentials.CredentialServiceStatus
 import com.ashishkumar.nivara.domain.credentials.EnrollmentResult
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
@@ -216,7 +217,7 @@ class DefaultBiometricAuthenticatorTest {
         val authenticator = DefaultBiometricAuthenticator(primary, platform, store, clock)
     }
 
-    private class MutableClock(var now: Long = 100_000L) : CredentialClock {
+    private class MutableClock(var now: Long = 100_000L) : TimeProvider {
         override fun nowEpochMillis(): Long = now
     }
 

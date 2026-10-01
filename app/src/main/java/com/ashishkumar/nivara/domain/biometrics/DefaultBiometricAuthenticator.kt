@@ -1,7 +1,7 @@
 package com.ashishkumar.nivara.domain.biometrics
 
 import com.ashishkumar.nivara.domain.credentials.AuthenticationResult
-import com.ashishkumar.nivara.domain.credentials.CredentialClock
+import com.ashishkumar.nivara.domain.security.TimeProvider
 import com.ashishkumar.nivara.domain.credentials.CredentialServiceStatus
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import kotlinx.coroutines.CancellationException
@@ -11,7 +11,7 @@ class DefaultBiometricAuthenticator(
     private val primaryCredentials: PrimaryCredentialService,
     private val platform: BiometricPromptPlatform,
     private val stateStore: BiometricStateStore,
-    private val clock: CredentialClock,
+    private val clock: TimeProvider,
 ) : BiometricAuthenticator {
     override suspend fun status(): BiometricStatus {
         return try {

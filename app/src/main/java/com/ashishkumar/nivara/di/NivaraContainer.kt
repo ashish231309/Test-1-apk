@@ -26,6 +26,9 @@ import com.ashishkumar.nivara.domain.security.CredentialKeyDeriver
 import com.ashishkumar.nivara.domain.security.DeviceKeyStore
 import com.ashishkumar.nivara.domain.security.KeyWrappingService
 import com.ashishkumar.nivara.domain.security.SecureRandomSource
+import com.ashishkumar.nivara.domain.security.session.DefaultSessionManager
+import com.ashishkumar.nivara.domain.security.session.SessionManager
+import com.ashishkumar.nivara.domain.security.session.SessionTimeoutPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,6 +43,7 @@ interface NivaraContainer {
     val deviceKeyStore: DeviceKeyStore
     val credentialStore: PrimaryCredentialStore
     val primaryCredentialService: PrimaryCredentialService
+    val sessionManager: SessionManager
     fun biometricAuthenticator(activity: FragmentActivity): BiometricAuthenticator
 }
 
@@ -64,6 +68,15 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
     }
 
     private val credentialClock = SystemCredentialClock()
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override val sessionManager: SessionManager by lazy {
+        DefaultSessionManager(
+            timeProvider = credentialClock,
+            timeoutPolicy = SessionTimeoutPolicy.DEFAULT,
+            applicationScope = applicationScope,
+        )
+    }
 
     private val preferenceDataStore: DataStore<Preferences> by lazy {
         PreferenceDataStoreFactory.create(

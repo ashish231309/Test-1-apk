@@ -4,6 +4,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -11,6 +13,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +34,10 @@ import com.ashishkumar.nivara.domain.biometrics.BiometricUnavailableReason
 import com.ashishkumar.nivara.domain.credentials.CredentialServiceStatus
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
+import com.ashishkumar.nivara.domain.security.session.AuthenticationSource
+import com.ashishkumar.nivara.domain.security.session.SessionManager
+import com.ashishkumar.nivara.domain.security.session.SessionState
+import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -38,6 +45,7 @@ import kotlinx.coroutines.launch
 fun CredentialHomeScreen(
     service: PrimaryCredentialService,
     biometricAuthenticator: BiometricAuthenticator,
+    sessionManager: SessionManager,
     refreshKey: Int,
     onEnroll: () -> Unit,
     onVerify: (PrimaryCredentialType) -> Unit,
@@ -45,20 +53,27 @@ fun CredentialHomeScreen(
     onEnableBiometric: (PrimaryCredentialType) -> Unit,
     onDisableBiometric: (PrimaryCredentialType) -> Unit,
 ) {
+    SecureScreenEffect()
     var status by remember { mutableStateOf<CredentialServiceStatus?>(null) }
     var biometricStatus by remember { mutableStateOf<BiometricStatus?>(null) }
     var biometricResult by remember { mutableStateOf<BiometricAuthenticationResult?>(null) }
+    var sessionNotice by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(service, biometricAuthenticator, refreshKey) {
+    val sessionState by sessionManager.sessionState.collectAsState()
+    LaunchedEffect(service, biometricAuthenticator, sessionManager, refreshKey) {
+        sessionManager.currentState()
         status = service.status()
         biometricStatus = biometricAuthenticator.status()
         biometricResult = null
     }
+    LaunchedEffect(sessionState) {
+        if (sessionState == SessionState.Unauthenticated) biometricResult = null
+    }
 
     Scaffold { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -82,6 +97,11 @@ fun CredentialHomeScreen(
                     OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = { onChange(current.type) }) {
                         Text(stringResource(R.string.credential_change))
                     }
+                    SessionControls(
+                        state = sessionState,
+                        onLockNow = { scope.launch { sessionManager.lockNow() } },
+                    )
+                    sessionNotice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     if (biometricStatus == null) {
                         CircularProgressIndicator(modifier = Modifier.padding(top = 16.dp))
                     } else {
@@ -93,8 +113,18 @@ fun CredentialHomeScreen(
                                 if (!busy) scope.launch {
                                     busy = true
                                     biometricResult = null
+                                    sessionNotice = null
                                     try {
-                                        biometricResult = biometricAuthenticator.authenticate()
+                                        val completion = sessionManager.authenticateBiometric {
+                                            biometricAuthenticator.authenticate()
+                                        }
+                                        if (completion.outcome == BiometricAuthenticationResult.Authenticated &&
+                                            !completion.sessionEstablished
+                                        ) {
+                                            sessionNotice = "Quick Lock cancelled that authentication request. Authenticate again."
+                                        } else {
+                                            biometricResult = completion.outcome
+                                        }
                                     } catch (failure: CancellationException) {
                                         throw failure
                                     } catch (_: Exception) {
@@ -116,6 +146,30 @@ fun CredentialHomeScreen(
                     color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionControls(
+    state: SessionState,
+    onLockNow: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.padding(top = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        when (state) {
+            SessionState.Unauthenticated -> Text("No authenticated session. Authenticate again before protected actions.")
+            is SessionState.Authenticated -> {
+                val source = when (state.session.source) {
+                    AuthenticationSource.PRIMARY -> "primary credential"
+                    AuthenticationSource.BIOMETRIC -> "biometric"
+                }
+                Text("Authenticated session active via $source.", color = MaterialTheme.colorScheme.primary)
+                OutlinedButton(onClick = onLockNow) { Text("Quick Lock now") }
             }
         }
     }

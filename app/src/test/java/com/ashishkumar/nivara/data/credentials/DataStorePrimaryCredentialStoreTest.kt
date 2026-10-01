@@ -1,12 +1,13 @@
 package com.ashishkumar.nivara.data.credentials
 
+import com.ashishkumar.nivara.domain.security.TimeProvider
+
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.ashishkumar.nivara.data.security.AesGcmKeyWrappingService
 import com.ashishkumar.nivara.data.security.JcaAesGcmEncryption
 import com.ashishkumar.nivara.data.security.JcaCredentialKeyDeriver
 import com.ashishkumar.nivara.data.security.JcaSecureRandomSource
 import com.ashishkumar.nivara.domain.credentials.AuthenticationResult
-import com.ashishkumar.nivara.domain.credentials.CredentialClock
 import com.ashishkumar.nivara.domain.credentials.CredentialServiceStatus
 import com.ashishkumar.nivara.domain.credentials.CredentialChangeResult
 import com.ashishkumar.nivara.domain.credentials.DefaultPrimaryCredentialService
@@ -142,7 +143,7 @@ class DataStorePrimaryCredentialStoreTest {
             keyDeriver = JcaCredentialKeyDeriver(random),
             keyWrapping = AesGcmKeyWrappingService(JcaAesGcmEncryption(random)),
             random = random,
-            clock = CredentialClock { 100_000L },
+            clock = TimeProvider { 100_000L },
         )
     }
 
