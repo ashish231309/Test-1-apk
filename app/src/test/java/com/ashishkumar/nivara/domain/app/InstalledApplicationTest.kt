@@ -83,7 +83,7 @@ class InstalledApplicationOrderingTest {
         )
 
         assertEquals(
-            listOf("com.alpha", "com.zeta", "com.beta"),
+            listOf("com.beta", "com.alpha", "com.zeta"),
             InstalledApplicationOrdering.reverseAlphabetical(apps).map(InstalledApplication::packageName),
         )
         assertEquals(

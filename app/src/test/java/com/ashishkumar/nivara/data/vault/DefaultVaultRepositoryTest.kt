@@ -354,7 +354,15 @@ class DefaultVaultRepositoryTest {
         var commitCalls = 0
         var commitResult: VaultStorageCommitResult = VaultStorageCommitResult.Created
 
-        override suspend fun inspect(): VaultStorageSnapshot = snapshot
+        override suspend fun inspect(): VaultStorageSnapshot = when (val current = snapshot) {
+            is VaultStorageSnapshot.Available -> current.copy(
+                metadata = when (val metadata = current.metadata) {
+                    is VaultMetadataFile.Present -> VaultMetadataFile.Present(metadata.bytes.copyOf())
+                    else -> metadata
+                },
+            )
+            else -> current
+        }
 
         override suspend fun initializeAtomically(metadataBytes: ByteArray): VaultStorageCommitResult {
             commitCalls++
