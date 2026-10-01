@@ -7,13 +7,15 @@ import com.ashishkumar.nivara.ui.NivaraApp
 import com.ashishkumar.nivara.ui.theme.NivaraTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
     private val container by lazy { (application as NivaraApplication).container }
-    private val foregroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val foregroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var monitoringStartJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,7 +35,17 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
-        foregroundScope.launch { container.sessionManager.currentState() }
+        monitoringStartJob?.cancel()
+        monitoringStartJob = foregroundScope.launch {
+            container.sessionManager.currentState()
+            container.appLockMonitoringController.start()
+        }
+    }
+
+    override fun onPause() {
+        monitoringStartJob?.cancel()
+        monitoringStartJob = null
+        super.onPause()
     }
 
     override fun onDestroy() {

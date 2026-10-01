@@ -1,6 +1,6 @@
 # Security foundation notes
 
-This document describes the Stage 2 cryptographic primitives and the Stage 3–6 credential, biometric, in-memory session, app-discovery, and Usage Access boundaries. It is not a claim that the complete application has undergone an external security audit.
+This document describes the Stage 2 cryptographic primitives and the Stage 3–7 credential, biometric, in-memory session, app-discovery, Usage Access, and App Lock detection boundaries. It is not a claim that the complete application has undergone an external security audit.
 
 ## Cryptographic formats and APIs
 
@@ -48,6 +48,14 @@ This document describes the Stage 2 cryptographic primitives and the Stage 3–6
 - The screen uses the shared `SecureScreenEffect` as required by the existing UI security boundary. That does not imply App Lock protection is active.
 - Platform references: [Package visibility declarations](https://developer.android.com/training/package-visibility/declaring), [UsageStatsManager](https://developer.android.com/reference/android/app/usage/UsageStatsManager), [PACKAGE_USAGE_STATS](https://developer.android.com/reference/android/Manifest.permission#PACKAGE_USAGE_STATS), [AppOpsManager](https://developer.android.com/reference/android/app/AppOpsManager), and [Settings.ACTION_USAGE_ACCESS_SETTINGS](https://developer.android.com/reference/android/provider/Settings#ACTION_USAGE_ACCESS_SETTINGS).
 
+## App Lock detection and service (Stage 7)
+
+- Protected applications have one stable identity: package name. The selected set is persisted separately from the Stage 5 session in an application-private, versioned SharedPreferences file. Package-only updates are written atomically. Malformed or version-unknown contents produce an explicit unavailable/degraded state, never a successful empty set. As documented in [docs/applock/README.md](docs/applock/README.md), complete deletion of the preferences file is indistinguishable from first install and resets the set to empty; this deliberately documented data-loss case removes prior protection configuration.
+- A pure domain reducer/decision layer receives package-only foreground observations, the persisted protected set, the injected Nivara package name, and `SessionManager.currentState()`. It creates no Activity, overlay, biometric prompt, credential attempt, or authentication cache. A small per-visit event debouncer prevents repeated authentication-required emissions while an unauthenticated protected package remains active; leaving it resets the marker.
+- Android detection incrementally queries UsageEvents on a centralized two-second cadence and retains only bounded in-memory event deduplication/current-package state. It does not persist or log usage history. Missing Usage Access, unknown/corrupt protected configuration, a failed query, and a missing initial foreground baseline remain explicit degraded states and are not interpreted as an empty protected set or safe foreground.
+- A single NivaraContainer-owned coordinator is run by a non-exported `specialUse` foreground service with a visible notification and explicit Stop action. The service can be restarted by Android after process death, but background detection, event timeliness, OEM behavior, and store-policy acceptance are not guaranteed. The service uses its notification as the user-visible rationale and does not request `POST_NOTIFICATIONS`.
+- The only Stage 7 permissions added are `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_SPECIAL_USE`, required for the declared Android foreground-service type. Stage 6's `PACKAGE_USAGE_STATS` remains the user-granted Usage Access prerequisite. No overlay, notification-runtime, accessibility, or battery-optimization permission is declared. Stage 8 owns the overlay and authentication presentation; Stage 7 produces only decisions/events. Detailed service, polling, persistence, corruption, and limitation decisions live in `docs/applock/README.md`.
+
 ## Key and secret handling
 
 - AndroidKeyStore aliases are namespaced and validated. Keys are AES-256, GCM-only, no-padding, encrypt/decrypt keys with randomized encryption enabled. Key bytes are not exported. Hardware-backed storage depends on the device/provider and is not guaranteed by this implementation.
@@ -55,8 +63,8 @@ This document describes the Stage 2 cryptographic primitives and the Stage 3–6
 - Mutable temporary buffers under application control are cleared where practical. JVM providers, `SecretKeySpec`, `Cipher`, JIT compilation, garbage collection, and platform internals may make additional copies that cannot be reliably overwritten. Therefore this implementation does not claim perfect memory erasure. Avoid converting secrets to `String`, keep their lifetime short, and clear caller-owned password/key arrays after use.
 - Security exceptions expose stable generic messages and intentionally omit provider exceptions and sensitive values. Security code does not log key, password, PIN, derived-key, or recovery material.
 
-## Stage 3–6 boundary and later integration contract
+## Stage 3–7 boundary and later integration contract
 
-- Stage 3 provides enrollment, verification, and replacement for exactly one active PIN, password, or pattern. Stage 4 adds optional secondary biometric authentication without replacing that primary path. Stage 5 consumes those typed outcomes to establish an in-memory session; there is still no App Lock policy, recovery/reset path, or vault/file persistence.
+- Stage 3 provides enrollment, verification, and replacement for exactly one active PIN, password, or pattern. Stage 4 adds optional secondary biometric authentication without replacing that primary path. Stage 5 consumes those typed outcomes to establish an in-memory session; Stage 7 adds package-based detection decisions only, not app-blocking UI/enforcement, recovery/reset, or vault/file persistence.
 - Changing the primary credential requires successful verification of the old value and atomically replaces the one stored credential record. It does not rewrap vault keys: no vault key exists in this stage. A future vault must use a random content key (never the PIN/password/pattern or its derived key as the content key); integrating credential changes must explicitly decide how that independent key is protected and atomically rewrapped/migrated before claiming vault continuity.
 - No recovery key or fixed/master credential is created. If recovery is designed later, its threat model, key lifecycle, enrollment UX, and migration semantics must be specified separately; it must not become a silent bypass for primary authentication.

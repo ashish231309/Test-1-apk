@@ -22,4 +22,13 @@
     <string name="pattern_instructions">Draw a connected pattern through at least four points.</string>
     <string name="cancel">Cancel</string>
     <string name="done">Done</string>
+    <string name="app_lock_monitor_channel_name">App Lock monitoring</string>
+    <string name="app_lock_monitor_channel_description">Visible status for Nivara's selected-app protection monitoring.</string>
+    <string name="app_lock_monitor_notification_title">Nivara App Lock</string>
+    <string name="app_lock_monitor_starting">Starting protection monitoring.</string>
+    <string name="app_lock_monitor_active">Protection monitoring is active.</string>
+    <string name="app_lock_monitor_attention">Monitoring needs attention. Open Nivara to review access or configuration.</string>
+    <string name="app_lock_monitor_no_apps">No protected apps are configured; monitoring is idle.</string>
+    <string name="app_lock_monitor_stopped">Protection monitoring is stopped.</string>
+    <string name="app_lock_monitor_stop">Stop monitoring</string>
 </resources>
