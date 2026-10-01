@@ -30,6 +30,7 @@ class MainActivity : FragmentActivity() {
                     appLockMonitoringController = container.appLockMonitoringController,
                     applicationRepository = container.applicationRepository,
                     protectedApplicationRepository = container.protectedApplicationRepository,
+                    hiddenApplicationRepository = container.hiddenApplicationRepository,
                     applicationIconProvider = container.applicationIconProvider,
                     usageAccessRepository = container.usageAccessRepository,
                     overlayCapabilityRepository = container.overlayCapabilityRepository,

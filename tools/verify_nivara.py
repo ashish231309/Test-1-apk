@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static checks for Nivara's durable App Lock and permission boundaries."""
+"""Static checks for Nivara's App Lock, hidden-app, and permission boundaries."""
 
 from __future__ import annotations
 
@@ -27,6 +27,97 @@ def source(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError as error:
         fail(f"required source is missing or unreadable ({path.relative_to(ROOT)}): {error}")
+
+
+def verify_hidden_architecture(root: Path) -> None:
+    """Stage 10 checks, split out so negative fixtures can exercise each boundary."""
+    package = "app/src/main/java/com/ashishkumar/nivara"
+    hidden_domain = root / package / "domain/apphide"
+    domain_files = sorted(hidden_domain.glob("*.kt"))
+    require(bool(domain_files), "hidden-app Android-free domain package is missing")
+    for path in domain_files:
+        text = path.read_text(encoding="utf-8")
+        require(not re.search(r"^\s*import\s+android\.", text, re.MULTILINE),
+                f"Android import in hidden-app domain: {path.name}")
+    model = "\n".join(path.read_text(encoding="utf-8") for path in domain_files)
+    require(re.search(r"data class HiddenApplication\(val packageName: String\)", model) is not None,
+            "HiddenApplication must use packageName as its sole identity")
+
+    data_dir = root / package / "data/apphide"
+    data_sources = sorted(data_dir.glob("*.kt"))
+    implementations = []
+    data_text = []
+    for path in data_sources:
+        text = path.read_text(encoding="utf-8")
+        data_text.append(text)
+        if re.search(r"\bclass\s+\w+[\s\S]*?\)\s*:\s*HiddenApplicationRepository\b", text):
+            implementations.append(path)
+    require(len(implementations) == 1,
+            f"exactly one data implementation may own hidden state (found {len(implementations)})")
+    all_data = "\n".join(data_text)
+    require("AtomicFile" in all_data and "HiddenApplicationsCodec" in all_data,
+            "hidden persistence must use the atomic adapter and versioned codec")
+    require("HiddenApplicationsSnapshot.Unreadable" in all_data and "HiddenApplicationsSnapshot.Unavailable" in all_data,
+            "hidden persistence must preserve explicit unreadable and unavailable outcomes")
+
+    view_model_path = root / package / "ui/apphide/HiddenApplicationManagementViewModel.kt"
+    screen_path = root / package / "ui/apphide/HiddenApplicationManagementScreen.kt"
+    view_model = view_model_path.read_text(encoding="utf-8")
+    screen = screen_path.read_text(encoding="utf-8")
+    forbidden_ui_storage = re.compile(
+        r"\b(?:AtomicFile|FileInputStream|FileOutputStream|File|HiddenApplicationsCodec|"
+        r"HiddenApplicationFileStore|AndroidAtomicHiddenApplicationStore)\b"
+    )
+    forbidden_package_hiding = re.compile(
+        r"\b(?:setApplicationEnabledSetting|setComponentEnabledSetting|"
+        r"COMPONENT_ENABLED_STATE_DISABLED)\b"
+    )
+    forbidden_new_auth = re.compile(r"\b(?:PrimaryCredentialService|BiometricAuthenticator|BiometricPrompt)\b")
+    for path, text in ((view_model_path, view_model), (screen_path, screen)):
+        require(not forbidden_ui_storage.search(text), f"UI layer accesses hidden storage directly: {path.name}")
+        require(not forbidden_package_hiding.search(text),
+                f"package-manager disabling is forbidden hiding logic: {path.name}")
+        require(not forbidden_new_auth.search(text),
+                f"hidden management must reuse SessionManager rather than add authentication: {path.name}")
+        require("Log." not in text and "println(" not in text,
+                f"hidden-app identifiers must not be logged: {path.name}")
+    require("SecureScreenEffect()" in screen, "hidden management must use the shared SecureScreenEffect")
+    require("InstalledApplicationSearch.matches" in view_model and
+            "InstalledApplicationOrdering.deterministic" in view_model and
+            "InstalledApplicationOrdering.reverseAlphabetical" in view_model,
+            "hidden management must reuse the established application search and ordering")
+    require("sessionManager.currentState()" in view_model,
+            "hidden mutations must re-check the existing SessionManager")
+    require(not re.search(r"protectedApplicationRepository\.(?:setProtected|protect|unprotect)\s*\(", view_model),
+            "hidden mutations must not change App Lock protected state")
+    require(not re.search(r"\b(?:HiddenAppSession|hiddenUnlocked|hiddenAuthCounter|hiddenTimeout)\b", view_model),
+            "a hidden-app-specific authentication/session mechanism is forbidden")
+
+    nav = (root / package / "ui/NivaraApp.kt").read_text(encoding="utf-8")
+    destinations = (root / package / "ui/navigation/AppDestination.kt").read_text(encoding="utf-8")
+    container = (root / package / "di/NivaraContainer.kt").read_text(encoding="utf-8")
+    require("AppDestination.HiddenApplicationManagement.route" in nav and
+            "HiddenApplicationManagementScreen(" in nav,
+            "hidden management destination must be registered in the existing navigation graph")
+    require("HiddenApplicationManagement" in destinations,
+            "hidden management navigation destination is missing")
+    require(len(re.findall(r"\boverride val hiddenApplicationRepository\b", container)) == 1,
+            "NivaraContainer must bind exactly one shared hidden repository")
+
+    production = root / package
+    for path in production.rglob("*.kt"):
+        text = path.read_text(encoding="utf-8")
+        require(not forbidden_package_hiding.search(text),
+                f"package-manager component disabling is forbidden: {path.relative_to(root)}")
+        require("DevicePolicyManager" not in text and "DeviceAdminReceiver" not in text,
+                f"device-admin/device-owner APIs are forbidden: {path.relative_to(root)}")
+    applock_domain = production / "domain/applock"
+    for path in applock_domain.glob("*.kt"):
+        require("HiddenApplication" not in path.read_text(encoding="utf-8"),
+                f"Stage 7/8 must not depend on hidden state: {path.name}")
+    stage9_view_model = production / "ui/applock/AppLockManagementViewModel.kt"
+    require("HiddenApplication" not in stage9_view_model.read_text(encoding="utf-8"),
+            "Stage 9 App Lock management must remain independent of hidden state")
 
 
 def main() -> None:
@@ -60,6 +151,10 @@ def main() -> None:
     require("POST_NOTIFICATIONS" not in manifest_text, "notification runtime permission is not required for FGS start")
     require("AccessibilityService" not in manifest_text and "BIND_ACCESSIBILITY_SERVICE" not in manifest_text,
             "accessibility APIs/services are out of scope")
+    require("BIND_DEVICE_ADMIN" not in manifest_text and "android.app.admin" not in manifest_text,
+            "device-admin/device-owner APIs are out of scope")
+    require("android.intent.category.HOME" not in manifest_text and "android.intent.category.DEFAULT" not in manifest_text,
+            "Stage 10 must not register a home/default launcher activity")
 
     query_intents = manifest.findall("queries/intent")
     require(
@@ -190,7 +285,11 @@ def main() -> None:
                      "quick lock", "overlay", "battery", "device/emulator", "background", "flag_secure"):
         require(required in docs, f"App Lock documentation must cover {required!r}")
 
-    print("PASS: App Lock permissions, service/activity declarations, secure presentation, auth routing, Stage 9 management, persistence, and docs.")
+    verify_hidden_architecture(ROOT)
+    hidden_docs = source(ROOT / "docs/apphide/README.md").lower()
+    for required in ("hiddenapplicationrepository", "unreadable", "atomicfile", "sessionmanager", "stage 11", "stock launcher", "cryptographically secret"):
+        require(required in hidden_docs, f"hidden-app documentation must cover {required!r}")
+    print("PASS: App Lock and hidden-app permissions, persistence, auth boundaries, navigation, and documentation.")
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ import com.ashishkumar.nivara.data.app.AndroidApplicationIconProvider
 import com.ashishkumar.nivara.domain.applock.ProtectedApplicationRepository
 import com.ashishkumar.nivara.domain.applock.AppLockMonitor
 import com.ashishkumar.nivara.domain.applock.AppLockMonitoringController
+import com.ashishkumar.nivara.domain.apphide.HiddenApplicationRepository
+import com.ashishkumar.nivara.ui.apphide.HiddenApplicationManagementScreen
 import com.ashishkumar.nivara.ui.applock.AppLockManagementScreen
 import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticator
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
@@ -40,6 +42,7 @@ fun NivaraApp(
     appLockMonitoringController: AppLockMonitoringController,
     applicationRepository: ApplicationRepository,
     protectedApplicationRepository: ProtectedApplicationRepository,
+    hiddenApplicationRepository: HiddenApplicationRepository,
     applicationIconProvider: AndroidApplicationIconProvider,
     usageAccessRepository: UsageAccessRepository,
     overlayCapabilityRepository: OverlayCapabilityRepository,
@@ -65,6 +68,7 @@ fun NivaraApp(
                 onEnableBiometric = { type -> navController.navigate("$BIOMETRIC_ENABLE/${type.storageValue}") },
                 onDisableBiometric = { type -> navController.navigate("$BIOMETRIC_DISABLE/${type.storageValue}") },
                 onPrepareAppLock = { navController.navigate(AppDestination.AppLockSetup.route) },
+                onManageHiddenApplications = { navController.navigate(AppDestination.HiddenApplicationManagement.route) },
             )
         }
         composable(AppDestination.AppLockSetup.route) {
@@ -89,6 +93,17 @@ fun NivaraApp(
                 applicationIconProvider = applicationIconProvider,
                 onBack = { navController.popBackStack() },
                 onOpenSetup = { navController.navigate(AppDestination.AppLockSetup.route) },
+                onReturnHomeForAuthentication = { navController.popBackStack(HOME, inclusive = false) },
+            )
+        }
+        composable(AppDestination.HiddenApplicationManagement.route) {
+            HiddenApplicationManagementScreen(
+                applicationRepository = applicationRepository,
+                hiddenApplicationRepository = hiddenApplicationRepository,
+                protectedApplicationRepository = protectedApplicationRepository,
+                sessionManager = sessionManager,
+                applicationIconProvider = applicationIconProvider,
+                onBack = { navController.popBackStack() },
                 onReturnHomeForAuthentication = { navController.popBackStack(HOME, inclusive = false) },
             )
         }

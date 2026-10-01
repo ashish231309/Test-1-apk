@@ -5,4 +5,5 @@ sealed class AppDestination(val route: String) {
     data object Home : AppDestination("home")
     data object AppLockSetup : AppDestination("app-lock/setup")
     data object AppLockManagement : AppDestination("app-lock/manage")
+    data object HiddenApplicationManagement : AppDestination("app-hide/manage")
 }

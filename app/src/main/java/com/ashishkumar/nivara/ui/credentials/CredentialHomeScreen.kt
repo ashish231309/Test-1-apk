@@ -53,6 +53,7 @@ fun CredentialHomeScreen(
     onEnableBiometric: (PrimaryCredentialType) -> Unit,
     onDisableBiometric: (PrimaryCredentialType) -> Unit,
     onPrepareAppLock: () -> Unit,
+    onManageHiddenApplications: () -> Unit,
 ) {
     SecureScreenEffect()
     var status by remember { mutableStateOf<CredentialServiceStatus?>(null) }
@@ -150,6 +151,9 @@ fun CredentialHomeScreen(
             }
             OutlinedButton(modifier = Modifier.padding(top = 16.dp), onClick = onPrepareAppLock) {
                 Text("Prepare App Lock")
+            }
+            OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = onManageHiddenApplications) {
+                Text("Manage hidden applications")
             }
         }
     }

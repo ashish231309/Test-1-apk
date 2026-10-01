@@ -18,4 +18,9 @@ class AppDestinationTest {
     fun appLockManagementDestinationUsesStableRoute() {
         assertEquals("app-lock/manage", AppDestination.AppLockManagement.route)
     }
+
+    @Test
+    fun hiddenApplicationManagementDestinationUsesStableRoute() {
+        assertEquals("app-hide/manage", AppDestination.HiddenApplicationManagement.route)
+    }
 }
