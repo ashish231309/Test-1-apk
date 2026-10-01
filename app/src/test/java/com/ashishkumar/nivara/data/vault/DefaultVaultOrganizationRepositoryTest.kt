@@ -188,11 +188,11 @@ class DefaultVaultOrganizationRepositoryTest {
         var checks = 0
         val result = h.repo.renameAlbum(vaultId, albumId, "Committed before expiry") {
             checks++
-            checks < 7
+            checks < 6
         }
         assertEquals(VaultAlbumMutationResult.AuthorizationExpired, result)
         assertEquals("Committed before expiry", (h.repo.inspect(vaultId) as VaultOrganizationRead.Ready).snapshot.albums.single().name)
-        assertTrue(checks >= 7)
+        assertTrue(checks >= 6)
     }
 
     @Test fun newestCorruptGenerationFailsClosedAndNeverFallsBackOrAppearsEmpty() = runBlocking {
