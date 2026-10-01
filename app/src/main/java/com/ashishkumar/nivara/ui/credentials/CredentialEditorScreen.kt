@@ -29,7 +29,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.password
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -187,6 +187,7 @@ internal fun CredentialEditorScreen(
                                 success = true
                                 message = "Biometric authentication enabled."
                             }
+                            BiometricManagementResult.Disabled -> message = "Biometric authentication is disabled."
                             BiometricManagementResult.AlreadyEnabled -> message = "Biometric authentication is already enabled."
                             BiometricManagementResult.AlreadyDisabled -> message = "Biometric authentication is disabled."
                             BiometricManagementResult.PrimaryCredentialRequired -> message = "Set up a primary credential first."
@@ -209,6 +210,7 @@ internal fun CredentialEditorScreen(
                                 success = true
                                 message = "Biometric authentication disabled. Your primary credential is unchanged."
                             }
+                            BiometricManagementResult.Enabled -> message = "Biometric authentication is enabled."
                             BiometricManagementResult.AlreadyDisabled -> {
                                 success = true
                                 message = "Biometric authentication is already disabled."
@@ -247,7 +249,7 @@ internal fun CredentialEditorScreen(
     val title = when (mode) {
         CredentialFlowMode.ENROLL -> stringResource(R.string.credential_enroll_title, type.displayName())
         CredentialFlowMode.VERIFY -> stringResource(R.string.credential_verify_title, type.displayName())
-        CredentialFlowMode.CHANGE -> stringResource(R.string.credential_change_title)
+        CredentialFlowMode.CHANGE -> stringResource(R.string.credential_change)
         CredentialFlowMode.BIOMETRIC_ENABLE -> "Enable biometric authentication"
         CredentialFlowMode.BIOMETRIC_DISABLE -> "Disable biometric authentication"
     }

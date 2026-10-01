@@ -81,8 +81,8 @@ class AndroidKeyStoreKeyManager : DeviceKeyStore {
 
     private fun asAes256Key(key: SecretKey): Aes256Key {
         val keyInfo = SecretKeyFactory.getInstance(KEY_ALGORITHM, ANDROID_KEY_STORE)
-            .getKeySpec(key, KeyInfo::class.java)
-        if (keyInfo.getKeySize() != Aes256Key.KEY_BYTES * Byte.SIZE_BITS) {
+            .getKeySpec(key, KeyInfo::class.java) as KeyInfo
+        if (keyInfo.keySize != Aes256Key.KEY_BYTES * Byte.SIZE_BITS) {
             throw SecurityFailure.InvalidKey()
         }
         return Aes256Key.fromAndroidKeyStore(key)
