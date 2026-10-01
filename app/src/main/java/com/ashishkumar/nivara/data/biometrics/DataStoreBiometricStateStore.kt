@@ -58,12 +58,14 @@ class DataStoreBiometricStateStore(
     }
 
     override suspend fun recordFailure(nowEpochMillis: Long): BiometricAttemptState = try {
+        var recorded: BiometricAttemptState? = null
         dataStore.edit { preferences ->
             val next = BiometricThrottlePolicy.recordFailure(readAttempts(preferences), nowEpochMillis)
             preferences[FAILED_ATTEMPTS] = next.failedAttempts
             preferences[BLOCKED_UNTIL] = next.blockedUntilEpochMillis
-            next
+            recorded = next
         }
+        recorded ?: throw BiometricPersistenceFailure()
     } catch (failure: CancellationException) {
         throw failure
     } catch (failure: Exception) {

@@ -11,6 +11,7 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -159,7 +160,11 @@ private class AppLockOverlayView(
             }
             elevation = dp(12).toFloat()
         }
-        val panelParams = LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER).apply {
+        val panelParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER,
+        ).apply {
             leftMargin = dp(20)
             rightMargin = dp(20)
         }
@@ -181,7 +186,7 @@ private class AppLockOverlayView(
 
         field.apply {
             hint = "Primary credential"
-            singleLine = true
+            setSingleLine(true)
             isSaveEnabled = false
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
             visibility = View.GONE
@@ -192,7 +197,7 @@ private class AppLockOverlayView(
             visibility = View.GONE
             contentDescription = "Primary pattern input"
         }
-        panel.addView(patternInput, LinearLayout.LayoutParams(MATCH_PARENT, dp(260)).apply {
+        panel.addView(patternInput, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(260)).apply {
             topMargin = dp(6)
         })
 
@@ -342,7 +347,10 @@ private class AppLockOverlayView(
         AppLockOverlayFeedback.PRIMARY_CREDENTIAL_UNAVAILABLE -> "Primary credential configuration is unavailable. Open Nivara to review setup."
     }
 
-    private fun matchWidthWrap() = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+    private fun matchWidthWrap() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+    ).apply {
         topMargin = dp(6)
     }
 
