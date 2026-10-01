@@ -9,6 +9,8 @@ import androidx.datastore.preferences.core.Preferences
 import com.ashishkumar.nivara.data.credentials.DataStorePrimaryCredentialStore
 import com.ashishkumar.nivara.data.applock.AndroidAppLockMonitoringController
 import com.ashishkumar.nivara.data.applock.AndroidForegroundApplicationDetector
+import com.ashishkumar.nivara.data.applock.AndroidOverlayCapabilityRepository
+import com.ashishkumar.nivara.data.applock.AndroidAppLockPresentationController
 import com.ashishkumar.nivara.data.applock.SharedPreferencesProtectedApplicationRepository
 import com.ashishkumar.nivara.data.app.AndroidApplicationRepository
 import com.ashishkumar.nivara.data.permissions.AndroidUsageAccessRepository
@@ -17,6 +19,7 @@ import com.ashishkumar.nivara.domain.applock.AppLockMonitor
 import com.ashishkumar.nivara.domain.applock.AppLockMonitoringController
 import com.ashishkumar.nivara.domain.applock.DefaultAppLockMonitor
 import com.ashishkumar.nivara.domain.applock.ProtectedApplicationRepository
+import com.ashishkumar.nivara.domain.applock.OverlayCapabilityRepository
 import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
 import com.ashishkumar.nivara.data.credentials.SystemCredentialClock
 import com.ashishkumar.nivara.data.biometrics.AndroidBiometricPromptPlatform
@@ -57,9 +60,11 @@ interface NivaraContainer {
     val sessionManager: SessionManager
     val applicationRepository: ApplicationRepository
     val usageAccessRepository: UsageAccessRepository
+    val overlayCapabilityRepository: OverlayCapabilityRepository
     val protectedApplicationRepository: ProtectedApplicationRepository
     val appLockMonitor: AppLockMonitor
     val appLockMonitoringController: AppLockMonitoringController
+    val appLockPresentationController: AndroidAppLockPresentationController
     fun biometricAuthenticator(activity: FragmentActivity): BiometricAuthenticator
 }
 
@@ -76,6 +81,9 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
     }
     override val usageAccessRepository: UsageAccessRepository by lazy {
         AndroidUsageAccessRepository(applicationContext)
+    }
+    override val overlayCapabilityRepository: OverlayCapabilityRepository by lazy {
+        AndroidOverlayCapabilityRepository(applicationContext)
     }
     override val protectedApplicationRepository: ProtectedApplicationRepository by lazy {
         SharedPreferencesProtectedApplicationRepository(applicationContext)
@@ -96,8 +104,20 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
         AndroidAppLockMonitoringController(
             context = applicationContext,
             usageAccessRepository = usageAccessRepository,
+            overlayCapabilityRepository = overlayCapabilityRepository,
             protectedApplicationRepository = protectedApplicationRepository,
             appLockMonitor = appLockMonitor,
+        )
+    }
+    override val appLockPresentationController: AndroidAppLockPresentationController by lazy {
+        AndroidAppLockPresentationController(
+            context = applicationContext,
+            monitor = appLockMonitor,
+            overlayCapabilityRepository = overlayCapabilityRepository,
+            protectedApplicationRepository = protectedApplicationRepository,
+            applicationRepository = applicationRepository,
+            primaryCredentialService = primaryCredentialService,
+            sessionManager = sessionManager,
         )
     }
 

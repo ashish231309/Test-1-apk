@@ -55,6 +55,7 @@ class DefaultAppLockMonitor(
     private val eventDebouncer = AuthenticationRequestDebouncer()
     private val lifecycleLock = Any()
     private var monitoringJob: Job? = null
+    private var observationSequence = 0L
 
     init {
         require(nivaraPackageName.isNotBlank())
@@ -100,6 +101,8 @@ class DefaultAppLockMonitor(
             mutableState.value = AppLockDetectionState.Stopped
         }
     }
+
+    override suspend fun refreshNow() = pollOnce()
 
     /** One deterministic observation step, also used directly by JVM tests. */
     suspend fun pollOnce() = pollMutex.withLock {
@@ -179,9 +182,11 @@ class DefaultAppLockMonitor(
         )
         val event = eventDebouncer.eventFor(decision)
         if (event != null) mutableEvents.tryEmit(event)
+        observationSequence = if (observationSequence == Long.MAX_VALUE) 0L else observationSequence + 1L
         mutableState.value = AppLockDetectionState.Monitoring(
             foregroundPackage = foreground?.packageName,
             decision = decision,
+            observationSequence = observationSequence,
             authenticationRequestPendingFor = eventDebouncer.pendingPackage,
         )
     }

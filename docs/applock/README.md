@@ -1,6 +1,6 @@
-# App Lock detection architecture (Stage 7)
+# App Lock architecture (Stages 7–8)
 
-This document records the Stage 7 detection boundary. It does not claim that Stage 7 can block an app: the overlay and authentication presentation are Stage 8 work.
+This document records the detection and authentication-presentation boundaries. Stage 7 makes package-based protection decisions; Stage 8 consumes those decisions with a secure Nivara-owned overlay. Neither the overlay nor Android background-execution policies are a platform-enforced kiosk guarantee.
 
 ## Protected application identity and persistence
 
@@ -33,12 +33,33 @@ This document records the Stage 7 detection boundary. It does not claim that Sta
 - One `NivaraContainer`-owned monitor is shared with the service. Repeated service starts call an idempotent `start()` and do not create parallel polling loops. Explicit controller/notification stop cancels that loop; `onDestroy()` resets event/debounce state. The notification Stop action stops the current service run; a later Nivara Activity resume rechecks prerequisites and may start monitoring again. `START_STICKY` allows Android to recreate the started service after process death; a new process has a new, unauthenticated Stage 5 session and loads the persisted package set. No boot receiver, accessibility service, alarm, OEM auto-start, or battery exemption is added. Detection after reboot resumes when the user next opens Nivara; user force-stop and OEM process-management behavior are not guaranteed around.
 - The application controller checks prerequisites before `startForegroundService()`. Android 12+ background-start restrictions are surfaced as `START_UNAVAILABLE`; it does not attempt a background-start workaround. Removing the final protected package stops the service. Process/service destruction cancels transient state; no phantom in-memory monitor survives.
 
-## Overlay, privacy, and platform limitations
+## Stage 8 overlay and authentication presentation
 
-- **No overlay permission is added in Stage 7.** Detection can expose an internal `AuthenticationRequired` event without UI. Stage 8 must decide and implement overlay capability, Settings entry, presentation, and authentication handoff. Detection alone does not block the target application.
-- No `SYSTEM_ALERT_WINDOW`, `POST_NOTIFICATIONS`, battery-optimization exemption, accessibility service, storage/media, location, camera, or microphone permission is added. The FGS permissions are the only Stage 7 additions; their exact justification is above. Existing Usage Access remains the user-granted prerequisite declared in Stage 6.
-- Production code does not log, transmit, or persist foreground packages or usage events. The only persistent new security configuration is the protected package identifier set. No usage statistics/history feature is introduced.
-- Android's UsageEvents timing, multi-window behavior, user/device-lock transitions, permission availability, process reclamation, FGS restrictions, and OEM policies can vary. The two-second poll is an intended cadence, not a guarantee. Physical-device/emulator verification is outstanding; unit tests of event mapping/decisions are not proof Android reports a particular foreground package.
+### Capability and setup
+
+- Stage 8 adds only `SYSTEM_ALERT_WINDOW`, the special app-op capability needed for `TYPE_APPLICATION_OVERLAY`. It is checked with `Settings.canDrawOverlays()` and requested through the official overlay-permission Settings page; it is not a runtime permission dialog. Capability and Settings launch have separate explicit results: `GRANTED`, `NOT_GRANTED`, `UNAVAILABLE`, and `OPENED`/`FAILED`. A missing or unavailable overlay is never represented as an empty protected-app set or as permission to pass through.
+- The minimal App Lock preparation screen shows Usage Access and overlay prerequisites independently, opens each official Settings surface, and rechecks on resume. This is setup/prerequisite UI only. Stage 9 search, selection management, sorting, and broader settings remain out of scope.
+- If overlay access is missing at service start, the monitoring controller reports the exact degraded prerequisite and does not start an FGS that cannot present protection. If the permission is revoked during monitoring, the presentation consumer removes/dismisses the window, reports attention through the existing monitor notification, and retries capability checks on the monitor's next observations. Detection and presentation remain separate: the Stage 7 monitor owns foreground decisions/events; the Stage 8 consumer owns only transient presentation/authentication requests.
+
+### Surface, identity, and cleanup
+
+- A single app-scoped `AndroidAppLockPresentationController` consumes the monitor `StateFlow` and validates every candidate against the current protected-package snapshot, current launchable-package snapshot, exact foreground package, current overlay capability, and existing `SessionManager` state. The stable target identity is the package name; a positive, process-local request ID distinguishes one authentication attempt from another. Request IDs are not persisted, logged, or put into an Intent. A late result for an old request cannot mutate or dismiss a newer request.
+- `AndroidAppLockOverlayHost` owns at most one `TYPE_APPLICATION_OVERLAY` WindowManager view. Its window has `FLAG_SECURE`; touch is not passed through. The Nivara-branded surface contains only primary PIN/password/pattern input, an existing-biometric action when available, generic feedback, and an explicit Return to Nivara action. It does not display target labels or package names.
+- Back is consumed while the protected request is current and cannot dismiss the surface. Outside touches are captured by the full-screen overlay. Home/Recents can leave the app, but detection rechecks the foreground and removes the old request once it no longer applies; returning to a protected app requires authentication again. The explicit Return to Nivara button brings Nivara forward and discards that transient request; if the user returns to the protected target, the monitor creates a fresh request. This does not establish an unlocked state.
+- Cleanup is idempotent across authentication success, failure, cancellation, stale identity, changed foreground, permission loss, WindowManager errors, explicit Stop, service teardown, and activity destruction. Sensitive input arrays and view input are cleared on submission/cleanup. A WindowManager/permission failure removes the surface and is shown as an attention condition rather than treating the protected target as unprotected.
+
+### Authentication and SessionManager
+
+- Before showing the surface and before committing authentication, the coordinator rechecks the existing process-scoped `SessionManager` and Stage 7 monitor. A valid existing session means no prompt is needed. Request invalidation or an unavailable foreground/protected snapshot rejects success before `SessionManager` can establish a new session; a late success that races invalidation is followed by the existing `lockNow()` safeguard and request cleanup.
+- Primary PIN/password/pattern input is routed to the existing `PrimaryCredentialService.authenticate()` and then through `SessionManager.authenticatePrimary()`. Nivara does not duplicate credential verification, the primary failed-attempt tracker, lockout policy, or a per-package auth counter. Caller-owned character arrays are cleared. Biometric success uses the existing `BiometricAuthenticator` and `SessionManager.authenticateBiometric()`; its AndroidX prompt runs in a non-exported, Recents-excluded, secure `FragmentActivity` because the existing authenticator requires that host. Cancel/failure/unavailable outcomes return to the overlay; no biometric state is cached by App Lock.
+- Global Stage 5 timeout and Quick Lock remain authoritative. There is no app-specific session, unlock flag, timer, counter, credential cache, biometric cache, or persistent unlocked-package list. Successful authentication creates only the normal shared in-memory session. Quick Lock and timeout continue to affect every protected target through the same `SessionManager`.
+- No sensitive values, package names, UsageEvents, or credentials are logged, sent over a network, or copied into Activity extras. There is no AccessibilityService or accessibility-based interception. `FLAG_SECURE` reduces screenshots/screen recording of the surface but cannot prevent every external camera, privileged-system, or compromised-device capture.
+
+### Background and runtime limitations
+
+- The overlay uses the user-controlled system capability; it is not a device-owner API, VPN, accessibility filter, or OS-level app launch barrier. Users can revoke it, force-stop Nivara, uninstall/clear its data, or change OEM background policies. A persistent Usage Access monitor still depends on the existing user-visible Stage 7 `specialUse` foreground service. Stage 8 adds no foreground service or notification solely to display overlays and adds no battery-optimization exemption.
+- Activity starts from background are restricted and vary by Android release. The biometric host is started only in response to an explicit tap on Nivara's visible overlay, but Android/OEM policy may still reject or alter it. Failures remain visible and do not silently authenticate. Android 15 narrows overlay-related exceptions for background foreground-service starts; this implementation does not use overlay permission to start a new FGS and does not claim that an FGS can be started from the background.
+- UsageEvents polling (nominally two seconds), multi-window/floating windows, lock screen/system UI, process reclamation, force-stop, notification policy, Settings behavior, OEM battery policy, and Android background Activity-start policy make protection best-effort. A delayed/missing foreground event can leave a gap before the overlay appears; no implementation here can promise enforcement against a user or system able to disable Nivara's capabilities. The exact device behavior must be verified on a physical device/emulator; no runtime verification is claimed in this repository change.
 
 ## Platform references
 
@@ -49,3 +70,8 @@ This document records the Stage 7 detection boundary. It does not claim that Sta
 - [Foreground-service types, including `specialUse`](https://developer.android.com/develop/background-work/services/fgs/service-types)
 - [Launching a foreground service](https://developer.android.com/develop/background-work/services/fgs/launch)
 - [Notification runtime permission and FGS exemption](https://developer.android.com/develop/ui/compose/notifications/notification-permission)
+- [SYSTEM_ALERT_WINDOW](https://developer.android.com/reference/android/Manifest.permission#SYSTEM_ALERT_WINDOW)
+- [Settings.ACTION_MANAGE_OVERLAY_PERMISSION](https://developer.android.com/reference/android/provider/Settings#ACTION_MANAGE_OVERLAY_PERMISSION)
+- [`WindowManager.LayoutParams.FLAG_SECURE`](https://developer.android.com/reference/android/view/WindowManager.LayoutParams#FLAG_SECURE)
+- [Background activity starts](https://developer.android.com/guide/components/activities/background-starts)
+- [Android 15 foreground-service behavior changes](https://developer.android.com/about/versions/15/behavior-changes-15)

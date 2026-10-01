@@ -11,6 +11,8 @@ sealed interface AppLockDetectionState {
     data class Monitoring(
         val foregroundPackage: String?,
         val decision: ProtectionDecision,
+        /** Forces presentation consumers to re-check non-UsageEvents prerequisites on each monitor cadence. */
+        val observationSequence: Long = 0,
         /** A debouncing marker for Stage 8 presentation; this is not an authenticated/unlocked state. */
         val authenticationRequestPendingFor: String?,
     ) : AppLockDetectionState
@@ -21,6 +23,8 @@ sealed interface AppLockDetectionState {
 enum class AppLockDegradedReason {
     USAGE_ACCESS_NOT_GRANTED,
     USAGE_ACCESS_UNAVAILABLE,
+    OVERLAY_PERMISSION_NOT_GRANTED,
+    OVERLAY_PERMISSION_UNAVAILABLE,
     PROTECTED_APPLICATIONS_UNAVAILABLE,
     FOREGROUND_DETECTION_UNAVAILABLE,
     SESSION_STATE_UNAVAILABLE,
@@ -34,6 +38,9 @@ interface AppLockMonitor {
 
     /** Idempotent. Returns true only when a new monitoring loop was created. */
     fun start(): Boolean
+
+    /** Requests one serialized, immediate observation before a security-sensitive overlay transition. */
+    suspend fun refreshNow()
 
     /** Exposes a prerequisite/platform failure even when monitoring could not be started. */
     suspend fun reportUnavailable(reason: AppLockDegradedReason)
@@ -49,6 +56,8 @@ enum class MonitoringStartResult {
     START_REQUESTED,
     USAGE_ACCESS_NOT_GRANTED,
     USAGE_ACCESS_UNAVAILABLE,
+    OVERLAY_PERMISSION_NOT_GRANTED,
+    OVERLAY_PERMISSION_UNAVAILABLE,
     PROTECTED_APPLICATIONS_UNAVAILABLE,
     NO_PROTECTED_APPLICATIONS,
     START_UNAVAILABLE,

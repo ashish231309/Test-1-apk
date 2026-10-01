@@ -9,6 +9,9 @@ import com.ashishkumar.nivara.domain.app.InstalledApplication
 import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
 import com.ashishkumar.nivara.domain.permissions.UsageAccessSettingsResult
 import com.ashishkumar.nivara.domain.permissions.UsageAccessStatus
+import com.ashishkumar.nivara.domain.applock.OverlayCapabilityRepository
+import com.ashishkumar.nivara.domain.applock.OverlayCapabilityStatus
+import com.ashishkumar.nivara.domain.applock.OverlaySettingsResult
 import com.ashishkumar.nivara.domain.setup.AppLockSetupState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +28,9 @@ sealed interface AppLockSetupUiState {
     data class Ready(
         val applications: List<InstalledApplication>,
         val setup: AppLockSetupState,
+        val overlayCapability: OverlayCapabilityStatus,
         val settingsLaunchResult: UsageAccessSettingsResult? = null,
+        val overlaySettingsLaunchResult: OverlaySettingsResult? = null,
     ) : AppLockSetupUiState
 
     data object Error : AppLockSetupUiState
@@ -34,6 +39,7 @@ sealed interface AppLockSetupUiState {
 class AppLockSetupViewModel(
     private val applicationRepository: ApplicationRepository,
     private val usageAccessRepository: UsageAccessRepository,
+    private val overlayCapabilityRepository: OverlayCapabilityRepository,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<AppLockSetupUiState>(AppLockSetupUiState.Loading)
     val state = mutableState.asStateFlow()
@@ -50,12 +56,13 @@ class AppLockSetupViewModel(
         refreshJob = viewModelScope.launch {
             mutableState.value = AppLockSetupUiState.Loading
             try {
-                val (discovery, usageStatus) = coroutineScope {
+                val (discovery, usageStatus, overlayStatus) = coroutineScope {
                     val applications = async(Dispatchers.IO) {
                         applicationRepository.discoverLaunchableApplications()
                     }
                     val usage = async(Dispatchers.IO) { usageAccessRepository.status() }
-                    applications.await() to usage.await()
+                    val overlay = async(Dispatchers.IO) { overlayCapabilityRepository.status() }
+                    Triple(applications.await(), usage.await(), overlay.await())
                 }
                 val applications = when (discovery) {
                     is ApplicationDiscoveryResult.Available -> discovery.applications
@@ -64,6 +71,7 @@ class AppLockSetupViewModel(
                 mutableState.value = AppLockSetupUiState.Ready(
                     applications = applications,
                     setup = AppLockSetupState.from(discovery, usageStatus),
+                    overlayCapability = overlayStatus,
                 )
             } catch (failure: CancellationException) {
                 throw failure
@@ -83,14 +91,29 @@ class AppLockSetupViewModel(
         mutableState.value = current.copy(settingsLaunchResult = result)
     }
 
+    fun openOverlayPermissionSettings() {
+        val current = mutableState.value as? AppLockSetupUiState.Ready ?: return
+        val result = try {
+            overlayCapabilityRepository.openSettings()
+        } catch (_: RuntimeException) {
+            OverlaySettingsResult.FAILED
+        }
+        mutableState.value = current.copy(overlaySettingsLaunchResult = result)
+    }
+
     class Factory(
         private val applicationRepository: ApplicationRepository,
         private val usageAccessRepository: UsageAccessRepository,
+        private val overlayCapabilityRepository: OverlayCapabilityRepository,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(AppLockSetupViewModel::class.java))
-            return AppLockSetupViewModel(applicationRepository, usageAccessRepository) as T
+            return AppLockSetupViewModel(
+                applicationRepository,
+                usageAccessRepository,
+                overlayCapabilityRepository,
+            ) as T
         }
     }
 }

@@ -17,6 +17,7 @@ import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticator
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
 import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
+import com.ashishkumar.nivara.domain.applock.OverlayCapabilityRepository
 import com.ashishkumar.nivara.domain.security.session.SessionManager
 import com.ashishkumar.nivara.ui.credentials.CredentialEditorScreen
 import com.ashishkumar.nivara.ui.credentials.CredentialFlowMode
@@ -32,6 +33,7 @@ fun NivaraApp(
     sessionManager: SessionManager,
     applicationRepository: ApplicationRepository,
     usageAccessRepository: UsageAccessRepository,
+    overlayCapabilityRepository: OverlayCapabilityRepository,
 ) {
     val navController = rememberNavController()
     var homeRefreshKey by remember { mutableIntStateOf(0) }
@@ -60,6 +62,7 @@ fun NivaraApp(
             AppLockSetupScreen(
                 applicationRepository = applicationRepository,
                 usageAccessRepository = usageAccessRepository,
+                overlayCapabilityRepository = overlayCapabilityRepository,
                 onBack = { navController.popBackStack() },
             )
         }

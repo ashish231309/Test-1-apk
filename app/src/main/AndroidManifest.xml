@@ -9,6 +9,8 @@
     <!-- Required for the persistent, user-visible monitoring service; no runtime prompt is associated. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Required only for Nivara's secure TYPE_APPLICATION_OVERLAY App Lock surface. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Narrow visibility to activities users can launch; do not enumerate all installed packages. -->
     <queries>
@@ -33,6 +35,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".data.applock.AppLockBiometricActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@style/AppLockBiometricTheme" />
         <service
             android:name=".data.applock.AppLockDetectionService"
             android:exported="false"

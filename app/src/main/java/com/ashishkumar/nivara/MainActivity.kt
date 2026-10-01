@@ -28,6 +28,7 @@ class MainActivity : FragmentActivity() {
                     sessionManager = container.sessionManager,
                     applicationRepository = container.applicationRepository,
                     usageAccessRepository = container.usageAccessRepository,
+                    overlayCapabilityRepository = container.overlayCapabilityRepository,
                 )
             }
         }

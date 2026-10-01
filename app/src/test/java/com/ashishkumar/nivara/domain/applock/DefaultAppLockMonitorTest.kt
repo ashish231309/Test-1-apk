@@ -92,7 +92,9 @@ class DefaultAppLockMonitorTest {
             assertEquals(ProtectionDecision.AuthenticationRequired(ProtectedPackage), first.decision)
 
             fixture.monitor.pollOnce()
-            assertEquals(first.authenticationRequestPendingFor, (fixture.monitor.state.value as AppLockDetectionState.Monitoring).authenticationRequestPendingFor)
+            val second = fixture.monitor.state.value as AppLockDetectionState.Monitoring
+            assertEquals(first.authenticationRequestPendingFor, second.authenticationRequestPendingFor)
+            assertEquals(first.observationSequence + 1, second.observationSequence)
             assertEquals(2, fixture.sessionManagerReads)
         } finally {
             fixture.close()

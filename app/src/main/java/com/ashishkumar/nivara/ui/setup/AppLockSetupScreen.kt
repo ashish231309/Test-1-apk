@@ -26,17 +26,25 @@ import com.ashishkumar.nivara.domain.app.ApplicationRepository
 import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
 import com.ashishkumar.nivara.domain.permissions.UsageAccessSettingsResult
 import com.ashishkumar.nivara.domain.permissions.UsageAccessStatus
+import com.ashishkumar.nivara.domain.applock.OverlayCapabilityRepository
+import com.ashishkumar.nivara.domain.applock.OverlayCapabilityStatus
+import com.ashishkumar.nivara.domain.applock.OverlaySettingsResult
 import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 
 @Composable
 fun AppLockSetupScreen(
     applicationRepository: ApplicationRepository,
     usageAccessRepository: UsageAccessRepository,
+    overlayCapabilityRepository: OverlayCapabilityRepository,
     onBack: () -> Unit,
 ) {
     SecureScreenEffect()
-    val factory = remember(applicationRepository, usageAccessRepository) {
-        AppLockSetupViewModel.Factory(applicationRepository, usageAccessRepository)
+    val factory = remember(applicationRepository, usageAccessRepository, overlayCapabilityRepository) {
+        AppLockSetupViewModel.Factory(
+            applicationRepository,
+            usageAccessRepository,
+            overlayCapabilityRepository,
+        )
     }
     val viewModel: AppLockSetupViewModel = viewModel(factory = factory)
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -56,8 +64,8 @@ fun AppLockSetupScreen(
             Text("App Lock preparation", style = MaterialTheme.typography.headlineSmall)
             OutlinedButton(onClick = onBack) { Text("Back") }
             Text(
-                "This screen checks launchable-app discovery and Usage Access for a future App Lock feature. " +
-                    "It does not enable app blocking or read usage history.",
+                "Usage Access lets Nivara detect protected apps. Overlay access lets it display the App Lock surface. " +
+                    "Protection is unreliable until both permissions are available.",
                 style = MaterialTheme.typography.bodyMedium,
             )
 
@@ -101,11 +109,11 @@ fun AppLockSetupScreen(
                     Text("Usage Access", style = MaterialTheme.typography.titleMedium)
                     when (current.setup.usageAccess) {
                         UsageAccessStatus.GRANTED -> Text(
-                            "Granted. Nivara can check this capability; Stage 6 does not read usage history.",
+                            "Granted. Nivara can detect foreground transitions; it does not save usage history.",
                             color = MaterialTheme.colorScheme.primary,
                         )
                         UsageAccessStatus.NOT_GRANTED -> Text(
-                            "Not granted. Open Android Settings if you want to prepare this capability.",
+                            "Not granted. Detection cannot operate reliably until you enable Usage Access.",
                         )
                         UsageAccessStatus.UNAVAILABLE -> Text(
                             "Usage Access status is unavailable on this device.",
@@ -127,9 +135,47 @@ fun AppLockSetupScreen(
                         null -> Unit
                     }
 
-                    if (current.setup.prerequisitesAvailable) {
+                    Text("Overlay access", style = MaterialTheme.typography.titleMedium)
+                    when (current.overlayCapability) {
+                        OverlayCapabilityStatus.GRANTED -> Text(
+                            "Granted. Nivara can display its secure App Lock surface.",
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        OverlayCapabilityStatus.NOT_GRANTED -> Text(
+                            "Not granted. App Lock cannot present its protection surface until enabled.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        OverlayCapabilityStatus.UNAVAILABLE -> Text(
+                            "Overlay capability is unsupported or unavailable on this device.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Button(onClick = viewModel::openOverlayPermissionSettings) {
+                        Text("Open Overlay Permission Settings")
+                    }
+                    when (current.overlaySettingsLaunchResult) {
+                        OverlaySettingsResult.OPENED -> Text(
+                            "Settings was opened. Nivara will re-check the permission when you return.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OverlaySettingsResult.FAILED -> Text(
+                            "Android could not open the overlay-permission page.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        null -> Unit
+                    }
+
+                    if (current.setup.prerequisitesAvailable &&
+                        current.overlayCapability == OverlayCapabilityStatus.GRANTED
+                    ) {
                         Text(
-                            "These prerequisites are available. App Lock protection is not active in this stage.",
+                            "These prerequisites are available. App Lock uses the existing SessionManager session after authentication.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    } else {
+                        Text(
+                            "Nivara cannot protect apps reliably until discovery, Usage Access, and overlay access are available.",
+                            color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }

@@ -22,6 +22,13 @@ def require(condition: bool, message: str) -> None:
         fail(message)
 
 
+def source(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as error:
+        fail(f"required source is missing or unreadable ({path.relative_to(ROOT)}): {error}")
+
+
 def main() -> None:
     manifest_path = ROOT / "app/src/main/AndroidManifest.xml"
     try:
@@ -38,17 +45,21 @@ def main() -> None:
         "PACKAGE_USAGE_STATS",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_SPECIAL_USE",
+        "SYSTEM_ALERT_WINDOW",
     }
     require(
         declared_permissions == allowed_permissions,
         f"unexpected manifest permission set: {sorted(declared_permissions)}",
     )
 
-    manifest_text = manifest_path.read_text(encoding="utf-8")
+    manifest_text = source(manifest_path)
     require("QUERY_ALL_PACKAGES" not in manifest_text, "broad package visibility must not be requested")
-    require("SYSTEM_ALERT_WINDOW" not in manifest_text, "overlay permission belongs to Stage 8")
+    require(manifest_text.count("android.permission.SYSTEM_ALERT_WINDOW") == 1,
+            "Stage 8 must add only one SYSTEM_ALERT_WINDOW declaration")
     require("REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" not in manifest_text, "battery workaround is out of scope")
     require("POST_NOTIFICATIONS" not in manifest_text, "notification runtime permission is not required for FGS start")
+    require("AccessibilityService" not in manifest_text and "BIND_ACCESSIBILITY_SERVICE" not in manifest_text,
+            "accessibility APIs/services are out of scope")
 
     query_intents = manifest.findall("queries/intent")
     require(
@@ -76,50 +87,91 @@ def main() -> None:
     )
     require("protected applications" in subtype.lower(), "specialUse subtype needs the concrete App Lock use case")
 
+    activities = manifest.findall("application/activity")
+    biometric_activity = next(
+        (item for item in activities
+         if item.get(ANDROID_NS + "name", "").endswith("AppLockBiometricActivity")),
+        None,
+    )
+    require(biometric_activity is not None, "the biometric prompt host must be declared")
+    require(biometric_activity.get(ANDROID_NS + "exported") == "false",
+            "the biometric prompt host must be non-exported")
+    require(biometric_activity.get(ANDROID_NS + "excludeFromRecents") == "true",
+            "the biometric prompt host must not appear as a recent task")
+
     domain = ROOT / "app/src/main/java/com/ashishkumar/nivara/domain/applock"
     require(domain.is_dir(), "Android-free App Lock domain package is missing")
     domain_files = sorted(domain.glob("*.kt"))
     require(bool(domain_files), "App Lock domain contracts are missing")
     for path in domain_files:
-        source = path.read_text(encoding="utf-8")
-        require(not re.search(r"^\s*import\s+android\.", source, re.MULTILINE), f"Android import in domain: {path.relative_to(ROOT)}")
+        text = source(path)
+        require(not re.search(r"^\s*import\s+android\.", text, re.MULTILINE),
+                f"Android import in domain: {path.relative_to(ROOT)}")
 
     production_root = ROOT / "app/src/main/java/com/ashishkumar/nivara"
-    applock_sources = [
-        path for path in production_root.rglob("*.kt")
-        if "applock" in path.parts
-    ]
+    applock_sources = [path for path in production_root.rglob("*.kt") if "applock" in path.parts]
     require(bool(applock_sources), "App Lock production implementation is missing")
     forbidden_state_names = re.compile(
-        r"\b(?:appUnlocked|currentlyAuthenticated|lastSuccessfulUnlock|perAppSession|isUnlockedForPackage)\b",
-        re.IGNORECASE,
+        r"\b(?:appUnlocked|currentlyAuthenticated|lastSuccessfulUnlock|perAppSession|isUnlockedForPackage|"
+        r"unlockedPackages|packageAuthCounter|perPackageSession)\b", re.IGNORECASE,
     )
     forbidden_logging = re.compile(r"\b(?:Log\.[a-zA-Z]+|println\s*\()")
     forbidden_storage = re.compile(r"\b(?:DataStore|RoomDatabase|SQLiteDatabase)\b")
-    forbidden_stage8_ui = ("Settings.canDrawOverlays", "SYSTEM_ALERT_WINDOW", "TYPE_APPLICATION_OVERLAY", "BiometricPrompt")
+    stage8_implementation_names = {
+        "AndroidAppLockOverlayHost.kt",
+        "AndroidAppLockPresentationController.kt",
+        "AndroidOverlayCapabilityRepository.kt",
+        "AppLockBiometricActivity.kt",
+    }
     for path in applock_sources:
-        source = path.read_text(encoding="utf-8")
-        require(not forbidden_state_names.search(source), f"duplicate unlock/session state in {path.relative_to(ROOT)}")
-        require(not forbidden_logging.search(source), f"package/event logging is forbidden in {path.relative_to(ROOT)}")
-        require(not forbidden_storage.search(source), f"use the documented minimal preferences store, not a database: {path.relative_to(ROOT)}")
-        require(not any(token in source for token in forbidden_stage8_ui), f"Stage 8 overlay/authentication UI leaked into {path.relative_to(ROOT)}")
+        text = source(path)
+        relative = path.relative_to(ROOT)
+        require(not forbidden_state_names.search(text), f"duplicate unlock/session state in {relative}")
+        require(not forbidden_logging.search(text), f"package/event logging is forbidden in {relative}")
+        require(not forbidden_storage.search(text), f"unexpected persistent/database state in {relative}")
+        if path.name not in stage8_implementation_names:
+            require(
+                not any(token in text for token in ("Settings.canDrawOverlays", "TYPE_APPLICATION_OVERLAY", "BiometricPrompt")),
+                f"overlay/authentication platform UI leaked into the detection boundary: {relative}",
+            )
 
-    container = (production_root / "di/NivaraContainer.kt").read_text(encoding="utf-8")
-    for binding in ("protectedApplicationRepository", "appLockMonitor", "appLockMonitoringController"):
+    overlay_host = source(production_root / "data/applock/AndroidAppLockOverlayHost.kt")
+    for required in ("TYPE_APPLICATION_OVERLAY", "FLAG_SECURE", "removeViewImmediate", "clearSensitiveInput"):
+        require(required in overlay_host, f"secure overlay host is missing {required}")
+    require("FLAG_NOT_TOUCHABLE" not in overlay_host, "the protected request must not pass touches through")
+
+    presentation = source(production_root / "data/applock/AndroidAppLockPresentationController.kt")
+    require("AppLockAuthenticationRouter" in presentation and "requestStillTargetsProtectedPackage" in presentation,
+            "presentation must validate request identity and route authentication through the shared router")
+    require("Intent(applicationContext, AppLockBiometricActivity::class.java)" in presentation,
+            "biometric host launch must remain explicit and Nivara-owned")
+    require(not re.search(r"putExtra\s*\(", presentation), "request identity or sensitive data must not be placed in Intent extras")
+
+    router = source(domain / "AppLockAuthenticationRouter.kt")
+    for required in ("authenticatePrimary", "authenticateBiometric", "sessionManager.authenticatePrimary",
+                     "sessionManager.authenticateBiometric", "requestStillValid", "credential.fill"):
+        require(required in router, f"authentication routing is missing {required}")
+    container = source(production_root / "di/NivaraContainer.kt")
+    for binding in ("protectedApplicationRepository", "appLockMonitor", "appLockMonitoringController",
+                    "appLockPresentationController", "sessionManager"):
         require(binding in container, f"NivaraContainer is missing App Lock binding {binding}")
 
-    protected_model = (domain / "ProtectedApplication.kt").read_text(encoding="utf-8")
+    protected_model = source(domain / "ProtectedApplication.kt")
     require("data class ProtectedApplication(val packageName: String)" in protected_model,
             "ProtectedApplication must use packageName as its only identity")
-    persistence = (ROOT / "app/src/main/java/com/ashishkumar/nivara/data/applock/SharedPreferencesProtectedApplicationRepository.kt").read_text(encoding="utf-8")
+    persistence = source(production_root / "data/applock/SharedPreferencesProtectedApplicationRepository.kt")
     require("commit()" in persistence and "ProtectedApplicationsSnapshot.Unavailable" in persistence,
             "protected-app writes must be atomic and malformed state must remain unavailable")
+    permission_contracts = source(domain / "OverlayCapabilityContracts.kt")
+    for value in ("GRANTED", "NOT_GRANTED", "UNAVAILABLE", "OPENED", "FAILED"):
+        require(value in permission_contracts, f"overlay capability contract is missing explicit {value} state")
 
-    docs = (ROOT / "docs/applock/README.md").read_text(encoding="utf-8").lower()
-    for required in ("foreground service", "specialuse", "usage access", "not_granted", "unavailable", "quick lock", "overlay", "battery", "device/emulator"):
+    docs = source(ROOT / "docs/applock/README.md").lower()
+    for required in ("foreground service", "specialuse", "usage access", "not_granted", "unavailable",
+                     "quick lock", "overlay", "battery", "device/emulator", "background", "flag_secure"):
         require(required in docs, f"App Lock documentation must cover {required!r}")
 
-    print("PASS: App Lock permissions, narrow package visibility, service declaration, domain boundary, persistence, and documentation.")
+    print("PASS: App Lock permissions, package visibility, service/activity declarations, secure presentation, auth routing, persistence, and docs.")
 
 
 if __name__ == "__main__":

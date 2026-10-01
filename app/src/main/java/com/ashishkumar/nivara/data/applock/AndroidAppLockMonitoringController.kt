@@ -7,6 +7,8 @@ import com.ashishkumar.nivara.domain.applock.AppLockDegradedReason
 import com.ashishkumar.nivara.domain.applock.AppLockMonitor
 import com.ashishkumar.nivara.domain.applock.AppLockMonitoringController
 import com.ashishkumar.nivara.domain.applock.MonitoringStartResult
+import com.ashishkumar.nivara.domain.applock.OverlayCapabilityRepository
+import com.ashishkumar.nivara.domain.applock.OverlayCapabilityStatus
 import com.ashishkumar.nivara.domain.applock.ProtectedApplicationRepository
 import com.ashishkumar.nivara.domain.applock.ProtectedApplicationsSnapshot
 import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
@@ -17,6 +19,7 @@ import kotlinx.coroutines.CancellationException
 class AndroidAppLockMonitoringController(
     context: Context,
     private val usageAccessRepository: UsageAccessRepository,
+    private val overlayCapabilityRepository: OverlayCapabilityRepository,
     private val protectedApplicationRepository: ProtectedApplicationRepository,
     private val appLockMonitor: AppLockMonitor,
 ) : AppLockMonitoringController {
@@ -42,6 +45,23 @@ class AndroidAppLockMonitoringController(
                 return MonitoringStartResult.USAGE_ACCESS_UNAVAILABLE
             }
         }
+        val overlayStatus = try {
+            overlayCapabilityRepository.status()
+        } catch (_: RuntimeException) {
+            OverlayCapabilityStatus.UNAVAILABLE
+        }
+        when (overlayStatus) {
+            OverlayCapabilityStatus.GRANTED -> Unit
+            OverlayCapabilityStatus.NOT_GRANTED -> {
+                appLockMonitor.reportUnavailable(AppLockDegradedReason.OVERLAY_PERMISSION_NOT_GRANTED)
+                return MonitoringStartResult.OVERLAY_PERMISSION_NOT_GRANTED
+            }
+            OverlayCapabilityStatus.UNAVAILABLE -> {
+                appLockMonitor.reportUnavailable(AppLockDegradedReason.OVERLAY_PERMISSION_UNAVAILABLE)
+                return MonitoringStartResult.OVERLAY_PERMISSION_UNAVAILABLE
+            }
+        }
+
         val snapshot = try {
             protectedApplicationRepository.getProtectedApplications()
         } catch (failure: CancellationException) {

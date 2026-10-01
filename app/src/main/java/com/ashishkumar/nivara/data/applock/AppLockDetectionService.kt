@@ -15,6 +15,7 @@ import com.ashishkumar.nivara.NivaraApplication
 import com.ashishkumar.nivara.R
 import com.ashishkumar.nivara.domain.applock.AppLockDetectionState
 import com.ashishkumar.nivara.domain.applock.AppLockMonitor
+import com.ashishkumar.nivara.domain.applock.AppLockPresentationState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,14 +24,18 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
-/** The single user-visible Android owner for Stage 7 monitoring. It presents no App Lock/authentication UI. */
+/** Owns the existing monitor service and coordinates the process-scoped presentation consumer. */
 class AppLockDetectionService : Service() {
     private val appLockMonitor: AppLockMonitor
         get() = (application as NivaraApplication).container.appLockMonitor
+    private val presentationController: AndroidAppLockPresentationController
+        get() = (application as NivaraApplication).container.appLockPresentationController
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var notificationJob: Job? = null
+    private var presentationJob: Job? = null
     private var lastNotificationKey: String? = null
+    private var presentationAttentionShown = false
 
     override fun onCreate() {
         super.onCreate()
@@ -38,7 +43,25 @@ class AppLockDetectionService : Service() {
         val starting = AppLockDetectionState.Starting
         lastNotificationKey = notificationKeyFor(starting)
         promoteToForeground(notificationFor(starting))
+        presentationController.start()
         appLockMonitor.start()
+        presentationJob = serviceScope.launch {
+            presentationController.state.collect { state ->
+                val attention = state is AppLockPresentationState.Failed
+                if (attention != presentationAttentionShown) {
+                    presentationAttentionShown = attention
+                    if (attention) {
+                        getSystemService(NotificationManager::class.java)
+                            ?.notify(NOTIFICATION_ID, notificationFor(AppLockDetectionState.Degraded(
+                                com.ashishkumar.nivara.domain.applock.AppLockDegradedReason.SERVICE_START_UNAVAILABLE,
+                            )))
+                    } else {
+                        getSystemService(NotificationManager::class.java)
+                            ?.notify(NOTIFICATION_ID, notificationFor(appLockMonitor.state.value))
+                    }
+                }
+            }
+        }
         notificationJob = serviceScope.launch {
             appLockMonitor.state.collect { state ->
                 if (state == AppLockDetectionState.NoProtectedApplications) {
@@ -47,8 +70,10 @@ class AppLockDetectionService : Service() {
                     val key = notificationKeyFor(state)
                     if (key != lastNotificationKey) {
                         lastNotificationKey = key
-                        getSystemService(NotificationManager::class.java)
-                            ?.notify(NOTIFICATION_ID, notificationFor(state))
+                        if (!presentationAttentionShown) {
+                            getSystemService(NotificationManager::class.java)
+                                ?.notify(NOTIFICATION_ID, notificationFor(state))
+                        }
                     }
                 }
             }
@@ -69,6 +94,8 @@ class AppLockDetectionService : Service() {
 
     override fun onDestroy() {
         notificationJob?.cancel()
+        presentationJob?.cancel()
+        presentationController.stop()
         serviceScope.cancel()
         appLockMonitor.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -76,6 +103,7 @@ class AppLockDetectionService : Service() {
     }
 
     private fun stopMonitoring() {
+        presentationController.stop()
         appLockMonitor.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
