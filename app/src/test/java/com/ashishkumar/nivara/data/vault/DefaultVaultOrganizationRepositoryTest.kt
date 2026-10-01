@@ -39,6 +39,7 @@ class DefaultVaultOrganizationRepositoryTest {
         h.storage.accessDenied = true
         assertEquals(VaultOrganizationRead.AccessDenied, h.repo.inspect(vaultId))
         h.storage.accessDenied = false
+        h.storage.directoryMissing = false
         h.storage.unexpected = true
         assertEquals(VaultOrganizationRead.Corrupt, h.repo.inspect(vaultId))
         assertTrue(h.storage.records.isEmpty())
