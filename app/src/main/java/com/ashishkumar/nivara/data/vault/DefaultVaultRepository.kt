@@ -468,12 +468,12 @@ class DefaultVaultRepository(
         val result = decryptObjectToQuarantine(vaultId, item, source, DiscardOutputStream, authorizationCheckpoint)
     ) {
         is VaultContentCryptoResult.Success -> VaultContentCryptoResult.Success(true)
-        is VaultContentCryptoResult.VaultUnavailable -> result
-        VaultContentCryptoResult.AuthenticationFailed -> result
-        is VaultContentCryptoResult.UnsupportedVersion -> result
-        VaultContentCryptoResult.OperationFailed -> result
-        VaultContentCryptoResult.AuthorizationExpired -> result
-        VaultContentCryptoResult.SourceSizeMismatch -> result
+        is VaultContentCryptoResult.VaultUnavailable -> VaultContentCryptoResult.VaultUnavailable(result.status)
+        VaultContentCryptoResult.AuthenticationFailed -> VaultContentCryptoResult.AuthenticationFailed
+        is VaultContentCryptoResult.UnsupportedVersion -> VaultContentCryptoResult.UnsupportedVersion(result.version)
+        VaultContentCryptoResult.OperationFailed -> VaultContentCryptoResult.OperationFailed
+        VaultContentCryptoResult.AuthorizationExpired -> VaultContentCryptoResult.AuthorizationExpired
+        VaultContentCryptoResult.SourceSizeMismatch -> VaultContentCryptoResult.SourceSizeMismatch
     }
 
     override suspend fun decryptObjectToQuarantine(

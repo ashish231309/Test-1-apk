@@ -132,7 +132,7 @@ class AndroidVaultContentPresentationRepository(
             return VaultPresentationOpenResult.Unsupported
         }
         val quarantine = WipingBoundedOutputStream(MAX_IMAGE_COMPRESSED_BYTES)
-        try {
+        return try {
             when (crypto.decryptObjectToQuarantine(vaultId, item, input, quarantine, authorizationCheckpoint)) {
                 is VaultContentCryptoResult.Success -> {
                     if (!authorized(authorizationCheckpoint)) return VaultPresentationOpenResult.AuthorizationExpired
@@ -171,7 +171,7 @@ class AndroidVaultContentPresentationRepository(
     ): VaultPresentationOpenResult {
         if (item.originalSizeBytes > MAX_TEXT_BYTES) return VaultPresentationOpenResult.Unsupported
         val quarantine = WipingBoundedOutputStream(MAX_TEXT_BYTES)
-        try {
+        return try {
             when (crypto.decryptObjectToQuarantine(vaultId, item, input, quarantine, authorizationCheckpoint)) {
                 is VaultContentCryptoResult.Success -> {
                     if (!authorized(authorizationCheckpoint)) return VaultPresentationOpenResult.AuthorizationExpired

@@ -35,19 +35,19 @@ class DataStorePrimaryCredentialStore(
     }
 
     override suspend fun installIfAbsent(credential: StoredPrimaryCredential): Boolean = try {
+        var installed = false
         dataStore.edit { preferences ->
             val typeExists = preferences[TYPE] != null
             val otherCredentialDataExists = hasPartialCredentialData(preferences)
-            if (typeExists) {
-                false
-            } else {
+            if (!typeExists) {
                 if (otherCredentialDataExists) throw CredentialPersistenceFailure()
                 writeCredential(preferences, credential)
                 preferences[FAILURES] = 0
                 preferences[BLOCKED_UNTIL] = 0L
-                true
+                installed = true
             }
         }
+        installed
     } catch (failure: CancellationException) {
         throw failure
     } catch (failure: Exception) {
@@ -79,6 +79,7 @@ class DataStorePrimaryCredentialStore(
     }
 
     override suspend fun recordFailure(nowEpochMillis: Long): AttemptState = try {
+        var recorded: AttemptState? = null
         dataStore.edit { preferences ->
             val previous = readAttempts(preferences)
             val nextCount = if (previous.failedAttempts == Int.MAX_VALUE) Int.MAX_VALUE
@@ -89,8 +90,9 @@ class DataStorePrimaryCredentialStore(
             else nowEpochMillis + delay
             preferences[FAILURES] = nextCount
             preferences[BLOCKED_UNTIL] = blockedUntil
-            AttemptState(nextCount, blockedUntil)
+            recorded = AttemptState(nextCount, blockedUntil)
         }
+        recorded ?: throw CredentialPersistenceFailure()
     } catch (failure: CancellationException) {
         throw failure
     } catch (failure: Exception) {

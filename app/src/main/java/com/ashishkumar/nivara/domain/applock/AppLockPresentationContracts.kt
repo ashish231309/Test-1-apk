@@ -108,15 +108,16 @@ class AppLockPresentationStateMachine {
         feedback: AppLockOverlayFeedback,
         retryAfterMillis: Long? = null,
     ): Boolean = synchronized(lock) {
-        val request = current.requestOrNull() ?: return@synchronized false
-        if (request.requestId != requestId || current is AppLockPresentationState.Dismissing ||
-            current is AppLockPresentationState.Failed
+        val state = current
+        val request = state.requestOrNull() ?: return@synchronized false
+        if (request.requestId != requestId || state is AppLockPresentationState.Dismissing ||
+            state is AppLockPresentationState.Failed
         ) {
             return@synchronized false
         }
-        val type = when (current) {
-            is AppLockPresentationState.Showing -> current.primaryCredentialType
-            is AppLockPresentationState.Authenticating -> current.primaryCredentialType
+        val type = when (state) {
+            is AppLockPresentationState.Showing -> state.primaryCredentialType
+            is AppLockPresentationState.Authenticating -> state.primaryCredentialType
             else -> null
         }
         current = AppLockPresentationState.Showing(request, type, feedback, retryAfterMillis)
