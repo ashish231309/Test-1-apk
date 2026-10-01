@@ -1,6 +1,9 @@
 name: Android foundation
 
 on:
+  push:
+    branches:
+      - 'arena/**'
   workflow_dispatch:
 
 permissions:
