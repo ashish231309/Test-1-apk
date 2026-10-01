@@ -3,10 +3,11 @@ package com.ashishkumar.nivara.ui.vault
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
-import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -32,8 +33,13 @@ import com.ashishkumar.nivara.domain.vault.content.VaultIndexWriteResult
 import com.ashishkumar.nivara.domain.vault.content.VaultImportRepository
 import com.ashishkumar.nivara.domain.vault.content.VaultImportResult
 import com.ashishkumar.nivara.domain.vault.content.VaultSourceSelectionId
-import com.ashishkumar.nivara.domain.vault.content.VaultSourceSelectionId
 import com.ashishkumar.nivara.domain.vault.content.VaultSourceSelectionResult
+import com.ashishkumar.nivara.domain.vault.content.VaultOrganizationRepository
+import com.ashishkumar.nivara.domain.vault.content.VaultOrganizationRead
+import com.ashishkumar.nivara.domain.vault.content.VaultOrganizationSnapshot
+import com.ashishkumar.nivara.domain.vault.content.VaultAlbumMutationResult
+import com.ashishkumar.nivara.domain.vault.content.VaultAlbumId
+import com.ashishkumar.nivara.domain.vault.content.VaultItemId
 import com.ashishkumar.nivara.ui.navigation.AppDestination
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,6 +89,7 @@ class VaultUiInstrumentedTest {
             VaultScreen(
                 repository = repository,
                 indexRepository = FakeIndexRepository(),
+                organizationRepository = FakeOrganizationRepository(),
                 importRepository = FakeImportRepository(),
                 sourceSelectionResult = null,
                 onConsumeSourceSelectionResult = {},
@@ -113,6 +120,7 @@ class VaultUiInstrumentedTest {
             VaultScreen(
                 repository = FakeVaultRepository(VaultStatus.Ready(VaultId("00112233445566778899aabbccddeeff"))),
                 indexRepository = FakeIndexRepository(),
+                organizationRepository = FakeOrganizationRepository(),
                 importRepository = FakeImportRepository(),
                 sourceSelectionResult = null,
                 onConsumeSourceSelectionResult = {},
@@ -134,6 +142,7 @@ class VaultUiInstrumentedTest {
             VaultScreen(
                 repository = FakeVaultRepository(VaultStatus.AccessDenied),
                 indexRepository = FakeIndexRepository(),
+                organizationRepository = FakeOrganizationRepository(),
                 importRepository = FakeImportRepository(),
                 sourceSelectionResult = null,
                 onConsumeSourceSelectionResult = {},
@@ -160,6 +169,7 @@ class VaultUiInstrumentedTest {
             VaultScreen(
                 repository = repository,
                 indexRepository = FakeIndexRepository(),
+                organizationRepository = FakeOrganizationRepository(),
                 importRepository = FakeImportRepository(),
                 sourceSelectionResult = null,
                 onConsumeSourceSelectionResult = {},
@@ -194,7 +204,7 @@ class VaultUiInstrumentedTest {
 
         composeRule.onNodeWithText("Authenticate from Nivara Home before configuring vault storage.").assertIsDisplayed()
         composeRule.onNodeWithText("A different folder is already bound; the saved location was not replaced.").assertIsDisplayed()
-        composeRule.onNodeWithText("Choose or reconnect folder").assertDoesNotExist()
+        composeRule.onAllNodesWithText("Choose or reconnect folder").assertCountEquals(0)
         composeRule.runOnIdle {
             assertEquals(false, pickerOpened)
             assertEquals(0, session.primaryAuthCalls)
@@ -214,6 +224,21 @@ class VaultUiInstrumentedTest {
             item: com.ashishkumar.nivara.domain.vault.content.VaultItem,
             authorizationCheckpoint: suspend () -> Boolean,
         ) = VaultIndexWriteResult.Failed
+    }
+
+    private class FakeOrganizationRepository : VaultOrganizationRepository {
+        override suspend fun inspect(vaultId: VaultId) =
+            VaultOrganizationRead.Ready(VaultOrganizationSnapshot(0, emptyList()))
+        override suspend fun createAlbum(vaultId: VaultId, name: String,
+            authorizationCheckpoint: suspend () -> Boolean) = VaultAlbumMutationResult.OrganizationUnavailable
+        override suspend fun renameAlbum(vaultId: VaultId, albumId: VaultAlbumId, name: String,
+            authorizationCheckpoint: suspend () -> Boolean) = VaultAlbumMutationResult.OrganizationUnavailable
+        override suspend fun deleteAlbum(vaultId: VaultId, albumId: VaultAlbumId,
+            authorizationCheckpoint: suspend () -> Boolean) = VaultAlbumMutationResult.OrganizationUnavailable
+        override suspend fun addMembership(vaultId: VaultId, albumId: VaultAlbumId, itemId: VaultItemId,
+            authorizationCheckpoint: suspend () -> Boolean) = VaultAlbumMutationResult.OrganizationUnavailable
+        override suspend fun removeMembership(vaultId: VaultId, albumId: VaultAlbumId, itemId: VaultItemId,
+            authorizationCheckpoint: suspend () -> Boolean) = VaultAlbumMutationResult.OrganizationUnavailable
     }
 
     private class FakeImportRepository : VaultImportRepository {
