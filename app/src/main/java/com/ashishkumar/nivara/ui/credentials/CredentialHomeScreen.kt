@@ -54,6 +54,7 @@ fun CredentialHomeScreen(
     onDisableBiometric: (PrimaryCredentialType) -> Unit,
     onPrepareAppLock: () -> Unit,
     onManageHiddenApplications: () -> Unit,
+    onManageVault: () -> Unit,
 ) {
     SecureScreenEffect()
     var status by remember { mutableStateOf<CredentialServiceStatus?>(null) }
@@ -154,6 +155,9 @@ fun CredentialHomeScreen(
             }
             OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = onManageHiddenApplications) {
                 Text("Manage hidden applications")
+            }
+            OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = onManageVault) {
+                Text("External encrypted vault")
             }
         }
     }

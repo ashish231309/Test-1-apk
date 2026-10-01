@@ -26,6 +26,32 @@ interface AuthenticatedEncryption {
     fun decrypt(envelope: EncryptedEnvelope, key: Aes256Key, context: CryptoContext): ByteArray
 }
 
+/** Bounded-memory AES-GCM stream extension. Callers must quarantine output until this returns successfully. */
+interface StreamingAuthenticatedEncryption : AuthenticatedEncryption {
+    suspend fun encryptStream(
+        input: java.io.InputStream,
+        output: java.io.OutputStream,
+        key: Aes256Key,
+        nonce: ByteArray,
+        context: CryptoContext,
+        authorizationCheckpoint: suspend () -> Boolean,
+        onProgress: (Long) -> Unit = {},
+    ): StreamCipherSummary
+
+    suspend fun decryptStream(
+        input: java.io.InputStream,
+        output: java.io.OutputStream,
+        key: Aes256Key,
+        nonce: ByteArray,
+        context: CryptoContext,
+        authorizationCheckpoint: suspend () -> Boolean,
+    ): StreamCipherSummary
+}
+
+data class StreamCipherSummary(val plaintextBytes: Long, val ciphertextBytes: Long)
+
+class StreamAuthorizationExpired : java.util.concurrent.CancellationException("authorization expired")
+
 /** Android Keystore boundary. Keys returned by this interface are non-exportable where the platform allows. */
 interface DeviceKeyStore {
     fun createAes256Key(alias: String): Aes256Key

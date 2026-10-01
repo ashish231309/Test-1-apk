@@ -23,4 +23,14 @@ class AppDestinationTest {
     fun hiddenApplicationManagementDestinationUsesStableRoute() {
         assertEquals("app-hide/manage", AppDestination.HiddenApplicationManagement.route)
     }
+
+    @Test
+    fun vaultDestinationUsesStableRoute() {
+        assertEquals("vault", AppDestination.Vault.route)
+    }
+
+    @Test
+    fun vaultRootConfigurationDestinationUsesStableRoute() {
+        assertEquals("vault/root-configuration", AppDestination.VaultRootConfiguration.route)
+    }
 }

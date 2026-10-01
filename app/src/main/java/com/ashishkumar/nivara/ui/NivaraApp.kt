@@ -26,6 +26,15 @@ import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
 import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
 import com.ashishkumar.nivara.domain.applock.OverlayCapabilityRepository
 import com.ashishkumar.nivara.domain.security.session.SessionManager
+import com.ashishkumar.nivara.domain.vault.VaultRepository
+import com.ashishkumar.nivara.domain.vault.VaultRootSelectionResult
+import com.ashishkumar.nivara.domain.vault.content.VaultImportRepository
+import com.ashishkumar.nivara.domain.vault.content.VaultIndexRepository
+import com.ashishkumar.nivara.domain.vault.content.VaultOrganizationRepository
+import com.ashishkumar.nivara.domain.vault.content.VaultContentPresentationGateway
+import com.ashishkumar.nivara.domain.vault.content.VaultSourceSelectionResult
+import com.ashishkumar.nivara.ui.vault.VaultRootConfigurationScreen
+import com.ashishkumar.nivara.ui.vault.VaultScreen
 import com.ashishkumar.nivara.ui.credentials.CredentialEditorScreen
 import com.ashishkumar.nivara.ui.credentials.CredentialFlowMode
 import com.ashishkumar.nivara.ui.credentials.CredentialHomeScreen
@@ -46,6 +55,17 @@ fun NivaraApp(
     applicationIconProvider: AndroidApplicationIconProvider,
     usageAccessRepository: UsageAccessRepository,
     overlayCapabilityRepository: OverlayCapabilityRepository,
+    vaultRepository: VaultRepository,
+    vaultIndexRepository: VaultIndexRepository,
+    vaultOrganizationRepository: VaultOrganizationRepository,
+    vaultImportRepository: VaultImportRepository,
+    vaultContentPresentationGateway: VaultContentPresentationGateway,
+    rootSelectionResult: VaultRootSelectionResult?,
+    sourceSelectionResult: VaultSourceSelectionResult?,
+    onConsumeRootSelectionResult: () -> Unit,
+    onConsumeSourceSelectionResult: () -> Unit,
+    onChooseVaultRoot: () -> Unit,
+    onChooseVaultSource: () -> Unit,
 ) {
     val navController = rememberNavController()
     var homeRefreshKey by remember { mutableIntStateOf(0) }
@@ -69,6 +89,7 @@ fun NivaraApp(
                 onDisableBiometric = { type -> navController.navigate("$BIOMETRIC_DISABLE/${type.storageValue}") },
                 onPrepareAppLock = { navController.navigate(AppDestination.AppLockSetup.route) },
                 onManageHiddenApplications = { navController.navigate(AppDestination.HiddenApplicationManagement.route) },
+                onManageVault = { navController.navigate(AppDestination.Vault.route) },
             )
         }
         composable(AppDestination.AppLockSetup.route) {
@@ -103,6 +124,33 @@ fun NivaraApp(
                 protectedApplicationRepository = protectedApplicationRepository,
                 sessionManager = sessionManager,
                 applicationIconProvider = applicationIconProvider,
+                onBack = { navController.popBackStack() },
+                onReturnHomeForAuthentication = { navController.popBackStack(HOME, inclusive = false) },
+            )
+        }
+        composable(AppDestination.Vault.route) {
+            VaultScreen(
+                repository = vaultRepository,
+                indexRepository = vaultIndexRepository,
+                organizationRepository = vaultOrganizationRepository,
+                importRepository = vaultImportRepository,
+                contentPresentationGateway = vaultContentPresentationGateway,
+                sessionManager = sessionManager,
+                rootSelectionResult = rootSelectionResult,
+                sourceSelectionResult = sourceSelectionResult,
+                onConsumeRootSelectionResult = onConsumeRootSelectionResult,
+                onConsumeSourceSelectionResult = onConsumeSourceSelectionResult,
+                onConfigureRoot = { navController.navigate(AppDestination.VaultRootConfiguration.route) },
+                onChooseSource = onChooseVaultSource,
+                onBack = { navController.popBackStack() },
+                onReturnHomeForAuthentication = { navController.popBackStack(HOME, inclusive = false) },
+            )
+        }
+        composable(AppDestination.VaultRootConfiguration.route) {
+            VaultRootConfigurationScreen(
+                sessionManager = sessionManager,
+                selectionResult = rootSelectionResult,
+                onChooseRoot = onChooseVaultRoot,
                 onBack = { navController.popBackStack() },
                 onReturnHomeForAuthentication = { navController.popBackStack(HOME, inclusive = false) },
             )

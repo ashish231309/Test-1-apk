@@ -354,6 +354,526 @@ def verify_camouflage_architecture(root: Path) -> None:
         require(required in readme, f"README must document Stage 12 {required!r}")
 
 
+def verify_vault_manifest(manifest: ET.Element) -> None:
+    manifest_text = ET.tostring(manifest, encoding="unicode")
+    forbidden = (
+        "MANAGE_EXTERNAL_STORAGE",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "QUERY_ALL_PACKAGES",
+        "BIND_ACCESSIBILITY_SERVICE",
+        "BIND_DEVICE_ADMIN",
+        "POST_NOTIFICATIONS",
+    )
+    for token in forbidden:
+        require(token not in manifest_text, f"vault must not add broad/unnecessary Android permission or visibility: {token}")
+    application = manifest.find("application")
+    require(application is not None, "manifest application declaration is missing")
+    require(not any("Vault" in component.get(ANDROID_NS + "name", "")
+                    for tag in ("activity", "activity-alias", "service", "receiver", "provider")
+                    for component in application.findall(tag)),
+            "vault must use the existing navigation and system document picker, not add components")
+    query_children = manifest.findall("queries/*")
+    query_intents = manifest.findall("queries/intent")
+    require(len(query_children) == 1 and len(query_intents) == 1,
+            "vault must retain only the existing narrow package-visibility query")
+    actions = {node.get(ANDROID_NS + "name", "") for node in query_intents[0].findall("action")}
+    categories = {node.get(ANDROID_NS + "name", "") for node in query_intents[0].findall("category")}
+    require(actions == {"android.intent.action.MAIN"} and
+            categories == {"android.intent.category.LAUNCHER"},
+            "vault must not broaden package visibility beyond launcher discovery")
+
+
+def verify_vault_architecture(root: Path, manifest: ET.Element) -> None:
+    package = root / "app/src/main/java/com/ashishkumar/nivara"
+    domain_dir = package / "domain/vault"
+    data_dir = package / "data/vault"
+    ui_dir = package / "ui/vault"
+    domain_files = sorted(domain_dir.glob("*.kt")) + sorted((domain_dir / "content").glob("*.kt"))
+    data_files = sorted(data_dir.glob("*.kt"))
+    ui_files = sorted(ui_dir.glob("*.kt"))
+    require(bool(domain_files), "Android-free vault domain contracts are missing")
+    require(bool(data_files), "external SAF vault data implementation is missing")
+    require(bool(ui_files), "vault UI foundation is missing")
+
+    domain_text = "\n".join(source(path) for path in domain_files)
+    for required in ("data object RootNotSelected : VaultStatus", "data object NotInitialized : VaultStatus",
+                     "data class Ready(val vaultId: VaultId) : VaultStatus",
+                     "data class Unavailable(val reason: VaultUnavailableReason) : VaultStatus",
+                     "data object AccessDenied : VaultStatus", "data object CorruptMetadata : VaultStatus",
+                     "data class UnsupportedVersion(val component: VaultFormatComponent, val version: Int?) : VaultStatus",
+                     "data object InvalidStructure : VaultStatus",
+                     "data class InitializationFailed(val reason: VaultInitializationFailure) : VaultStatus"):
+        require(required in domain_text, f"vault domain must expose distinct states ({required})")
+    for required in ("data class Initialized(val vaultId: VaultId) : VaultInitializationResult",
+                     "data object AlreadyInitialized : VaultInitializationResult",
+                     "data object RootNotSelected : VaultInitializationResult",
+                     "data class Unavailable(val reason: VaultUnavailableReason) : VaultInitializationResult",
+                     "data object AccessDenied : VaultInitializationResult",
+                     "data object CorruptMetadata : VaultInitializationResult",
+                     "data class UnsupportedVersion(val component: VaultFormatComponent, val version: Int?) : VaultInitializationResult",
+                     "data object InvalidStructure : VaultInitializationResult",
+                     "data class Failed(val reason: VaultInitializationFailure) : VaultInitializationResult"):
+        require(required in domain_text, f"vault initialization result must remain precise ({required})")
+    data_text = "\n".join(source(path) for path in data_files)
+    ui_text = "\n".join(source(path) for path in ui_files)
+    for path in domain_files:
+        text = source(path)
+        require(not re.search(r"^\s*import\s+android\.", text, re.MULTILINE),
+                f"Android import is forbidden in vault domain contract: {path.name}")
+        require(not re.search(r"\b(?:Uri|DocumentFile|ContentResolver|Context|File)\b", text),
+                f"platform storage handle is forbidden in vault domain contract: {path.name}")
+
+    require(all(token in domain_text for token in (
+        "RootNotSelected", "NotInitialized", "Ready", "Unavailable", "AccessDenied",
+        "CorruptMetadata", "UnsupportedVersion", "InvalidStructure", "InitializationFailed",
+    )), "vault domain must distinguish absent, valid, unavailable, corrupt, unsupported and invalid states")
+    require("interface VaultStorage" in domain_text and "interface VaultRepository" in domain_text,
+            "vault domain must define storage and repository boundaries")
+    require("android.net.Uri" not in ui_text and "DocumentFile" not in ui_text and
+            "ContentResolver" not in ui_text and "java.io.File" not in ui_text,
+            "Compose vault UI must not receive Android storage handles or filesystem paths")
+    require(not re.search(r"\b(?:openInputStream|openOutputStream|DocumentsContract|FileInputStream|FileOutputStream)\b", ui_text),
+            "Compose vault UI must not perform direct storage I/O")
+
+    forbidden_crypto_implementations = re.compile(
+        r"\b(?:javax\.crypto\.|Cipher\.getInstance|SecretKeyFactory\.getInstance|PBKDF2WithHmac|"
+        r"AES/GCM/NoPadding|class\s+\w*(?:Aes|AES|Gcm|GCM|KeyDeriver|KeyWrapper)\w*)"
+    )
+    for path in data_files:
+        text = source(path)
+        require(not forbidden_crypto_implementations.search(text),
+                f"vault data code must reuse Stage 2 cryptography, not implement another primitive: {path.name}")
+        credential_pattern = r"\b(?:PrimaryCredentialService|PrimaryCredentialStore|CredentialKeyDeriver|BiometricAuthenticator|password|pin|pattern)\b"
+        if path.name != "AndroidVaultContentPresentationRepository.kt":
+            credential_pattern = r"\b(?:PrimaryCredentialService|PrimaryCredentialStore|CredentialKeyDeriver|BiometricAuthenticator|CharArray|password|pin|pattern)\b"
+            require(not re.search(r"\b(?:SessionManager|sessionManager\.(?:authenticate|lockNow|establish))\b", text),
+                    f"vault storage must not create or control an authentication session: {path.name}")
+        require(not re.search(credential_pattern, text, re.IGNORECASE),
+                f"low-level vault storage must not handle credentials or derive keys from them: {path.name}")
+        require(not re.search(r"\b(?:HiddenApplicationRepository|ProtectedApplicationRepository|CamouflageRepository|"
+                              r"LauncherActivity|IdentityProfile)\b", text),
+                f"vault storage must remain independent of hidden apps, App Lock and camouflage: {path.name}")
+        require(not re.search(r"\b(?:Log\.[A-Za-z]+|println\s*\(|Timber\.|Firebase|Analytics|OkHttp|HttpURLConnection|Socket)\b", text),
+                f"vault storage must not log, use analytics, or access a network: {path.name}")
+        require(not re.search(r"\b(?:getExternalStorageDirectory|getFilesDir|filesDir|noBackupFilesDir|"
+                              r"Environment\.getExternalStorage|Downloads|DCIM|Pictures|Documents)\b|"
+                              r"['\"]/(?:storage|sdcard)/", text),
+                f"vault must not select an automatic or hard-coded filesystem fallback: {path.name}")
+
+    repo = source(data_dir / "DefaultVaultRepository.kt")
+    for required in ("AuthenticatedEncryption", "KeyWrappingService", "DeviceKeyStore", "SecureRandomSource",
+                     "keyWrapping.wrap(", "keyWrapping.unwrap(", "encryption.encrypt(", "encryption.decrypt(",
+                     "KeyProtection.ANDROID_KEYSTORE", "VaultStatus.CorruptMetadata", "VaultStatus.UnsupportedVersion",
+                     "VaultStatus.AccessDenied", "VaultStatus.InvalidStructure", "VaultStatus.NotInitialized",
+                     "VaultInitializationResult.CorruptMetadata", "VaultInitializationResult.UnsupportedVersion",
+                     "unexpectedDataEntries"):
+        require(required in repo, f"vault must use existing cryptographic services and fail-closed states ({required})")
+    require("CredentialKeyDeriver" not in repo and "PrimaryCredential" not in repo,
+            "vault content keys must be random and must not be derived directly from a primary credential")
+    require("catch" in repo and "CancellationException" in repo and
+            not re.search(r"catch\s*\([^)]*\)\s*\{\s*return(?:@\w+)?\s+(?:emptyList|emptySet|VaultStatus\.NotInitialized)", repo),
+            "vault failures must remain explicit and never collapse into an empty/uninitialized result")
+
+    picker = source(data_dir / "VaultRootSelectionHandler.kt")
+    for required in ("ACTION_OPEN_DOCUMENT_TREE", "takePersistableUriPermission", "DIFFERENT_ROOT_ALREADY_SELECTED",
+                     "FLAG_GRANT_READ_URI_PERMISSION", "FLAG_GRANT_WRITE_URI_PERMISSION"):
+        require(required in picker, f"external root must be explicitly selected and reconnected through SAF ({required})")
+    storage = source(data_dir / "SafVaultStorage.kt")
+    for required in ("DocumentsContract", "vault.nvmeta", "vault.nvmeta.pending", "data",
+                     "renameDocument", "contentEquals", "VaultStorageSnapshot.AccessDenied",
+                     "VaultMetadataFile.Unreadable", "VaultMetadataFile.Unavailable", "FLAG_SUPPORTS_RENAME"):
+        require(required in storage, f"SAF storage is missing explicit root/atomicity/failure handling ({required})")
+    require("renameDocument" in storage and "initializeAtomically" in storage and
+            "readRaw(finalMetadata)" in storage and "inspectLocked()" in storage,
+            "critical metadata must be committed through a temporary document, renamed, read back and checked")
+
+    location_ui = "\n".join((source(package / "MainActivity.kt"), ui_text))
+    vault_view_model = source(package / "ui/vault/VaultViewModel.kt")
+    require("sessionManager.currentState()" in vault_view_model and
+            "sessionManager.mayAccessSensitiveContent()" in vault_view_model,
+            "vault inspection and initialization must use the existing SessionManager gate")
+    for required in ("VaultInitializationResult.CorruptMetadata -> updateStatus(VaultStatus.CorruptMetadata)",
+                     "is VaultInitializationResult.UnsupportedVersion -> updateStatus("):
+        require(required in vault_view_model,
+                f"vault initialization must preserve precise failure states ({required})")
+    root_configuration_screen = source(ui_dir / "VaultRootConfigurationScreen.kt")
+    require("sessionManager.currentState()" in root_configuration_screen and
+            "sessionManager.mayAccessSensitiveContent()" in root_configuration_screen,
+            "root selection/configuration must use the existing SessionManager gate")
+    require(not re.search(r"\b(?:authenticatePrimary|authenticateBiometric|lockNow|PrimaryCredentialService|"
+                          r"BiometricAuthenticator)\b", ui_text),
+            "vault UI must not add a second authentication flow")
+    navigation = source(package / "ui/NivaraApp.kt")
+    require("AppDestination.Vault.route" in navigation and
+            re.search(r"\bVaultScreen\s*\(", navigation) is not None and
+            "onManageVault" in source(package / "ui/credentials/CredentialHomeScreen.kt"),
+            "vault must be reachable through the existing Nivara navigation graph")
+    require("AppDestination.VaultRootConfiguration.route" in navigation and
+            re.search(r"\bVaultRootConfigurationScreen\s*\(", navigation) is not None,
+            "vault must provide a distinct explicit root-configuration destination in the existing graph")
+    require("VaultRootPickerContract" in location_ui and
+            "rootSelectionResult = vaultRootSelectionResult" in source(package / "MainActivity.kt"),
+            "the system picker must return only a domain-safe result to the existing activity/UI")
+
+    container = source(package / "di/NivaraContainer.kt")
+    require("override val vaultRepository:" in container,
+            "NivaraContainer must bind the vault repository through the existing application container")
+    vault_binding = container.split("override val vaultRepository:", 1)[-1]
+    for required in ("DefaultVaultRepository(", "encryption = encryption",
+                     "keyWrapping = keyWrapping", "deviceKeyStore = deviceKeyStore", "random = secureRandom"):
+        require(required in vault_binding, f"vault DI must reuse the single Stage 2 service graph ({required})")
+    require("SafVaultStorage(" in container,
+            "the shared Stage 13 SAF storage adapter must remain the vault root authority")
+    require(container.count("DefaultVaultRepository(") == 1 and container.count("SafVaultStorage(") == 1,
+            "NivaraContainer must bind exactly one vault repository and external storage adapter")
+
+    manifest_text = ET.tostring(manifest, encoding="unicode")
+    for forbidden in ("MANAGE_EXTERNAL_STORAGE", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE",
+                      "QUERY_ALL_PACKAGES", "BIND_ACCESSIBILITY_SERVICE", "BIND_DEVICE_ADMIN",
+                      "POST_NOTIFICATIONS"):
+        require(forbidden not in manifest_text, f"vault must not add broad/unnecessary permission: {forbidden}")
+
+    metadata_codec = source(domain_dir / "VaultMetadataCodec.kt")
+    outer_metadata_codec, header_codec = metadata_codec.split("sealed interface VaultHeaderDecode", 1)
+    for required in ("const val CURRENT_VERSION = 1", "UnsupportedVersion", "NIVLT13M", "VaultId"):
+        require(required in outer_metadata_codec,
+                f"vault metadata must be versioned and authenticated ({required})")
+    for required in ("const val CURRENT_VERSION = 1", "UnsupportedVersion", "NVHDR13", "VaultId"):
+        require(required in header_codec,
+                f"encrypted vault header must be versioned and authenticated ({required})")
+    vault_screen = source(ui_dir / "VaultScreen.kt")
+    for required in ("VaultScreen(", "VaultStatus.RootNotSelected", "VaultStatus.NotInitialized",
+                     "VaultStatus.Ready", "VaultStatus.Unavailable", "VaultStatus.AccessDenied",
+                     "VaultStatus.CorruptMetadata", "VaultStatus.UnsupportedVersion", "VaultStatus.InvalidStructure",
+                     "VaultStatus.InitializationFailed"):
+        require(required in vault_screen, f"vault screen must render the explicit {required} state")
+    docs = source(root / "docs/vault/README.md").lower()
+    for required in ("storage access framework", "api 28", "scoped storage", "vault.nvmeta", "data/",
+                     "android keystore", "keywrappingservice", "authenticatedencryption", "not initialized",
+                     "access denied", "unavailable", "corrupt", "unsupported", "atomic", "no fallback",
+                     "stage 14", "stage 18", "reinstall", "permission", "no plaintext credentials",
+                     "root-configuration destination"):
+        require(required in docs, f"vault documentation must cover {required!r}")
+    readme = source(root / "README.md").lower()
+    for required in ("external encrypted vault", "docs/vault/readme.md", "stage 14", "file import"):
+        require(required in readme, f"README must describe current vault scope ({required!r})")
+    require("\n".join(path.read_text(encoding="utf-8") for path in ui_files).strip(),
+            "vault UI foundation must contain an explicit state consumer")
+
+
+def verify_vault_content_architecture(root: Path) -> None:
+    """Stage 14 contracts: Android-free records, streamed AEAD, authenticated snapshots and SAF-only import."""
+    package = root / "app/src/main/java/com/ashishkumar/nivara"
+    domain = package / "domain/vault/content"
+    data = package / "data/vault"
+    item = source(domain / "VaultItem.kt")
+    contracts = source(domain / "VaultIndexContracts.kt")
+    codec = source(domain / "VaultIndexCodec.kt")
+    repository = source(data / "DefaultVaultRepository.kt")
+    index_repo = source(data / "DefaultVaultIndexRepository.kt")
+    importer = source(data / "DefaultVaultImportRepository.kt")
+    storage = source(data / "SafVaultContentStorage.kt")
+    picker = source(data / "VaultSourceDocumentHandler.kt")
+    streaming_contract = source(package / "domain/security/CryptoContracts.kt")
+    streaming_impl = source(package / "data/security/JcaAesGcmEncryption.kt")
+    view_model = source(package / "ui/vault/VaultViewModel.kt")
+    screen = source(package / "ui/vault/VaultScreen.kt")
+    activity = source(package / "MainActivity.kt")
+    container = source(package / "di/NivaraContainer.kt")
+    docs = source(root / "docs/vault/README.md").lower()
+    stage14_docs = source(root / "docs/vault/stage14.md").lower()
+    readme = source(root / "README.md").lower()
+
+    content_domain_files = sorted(domain.glob("*.kt"))
+    require(bool(content_domain_files), "Stage 14 Android-free content domain package is missing")
+    for path in content_domain_files:
+        text = source(path)
+        require(not re.search(r"^\s*import\s+android\.", text, re.MULTILINE),
+                f"Android dependency in content domain: {path.name}")
+
+    require("val originalFilename: String" in item and "val id: VaultItemId" in item,
+            "content records must carry authenticated display metadata and a separate stable item identity")
+    require("item.originalFilename" in codec and "item.encryptedItemKey" in codec and "item.id.toBytes()" in codec,
+            "canonical index rows must authenticate filename metadata, item identity, and only an encrypted item key")
+    require("value.matches(Regex(\"[0-9a-f]{32}\"))" in item and "objectName(id: VaultItemId)" in storage,
+            "internal item IDs must be fixed-width names, never derived from original filenames")
+    require("random.generateBytes(VaultItemId.BYTE_COUNT)" in importer,
+            "stable internal item IDs must be independently generated with the shared secure random source")
+    require("MAX_INDEX_BYTES = 8 * 1024 * 1024" in codec and "MAX_ITEMS = 20_000" in codec,
+            "the authenticated index codec must enforce explicit byte and record-count bounds")
+    require("Unsupported(version)" in codec and "DecodeResult.Invalid" in codec and "input.available() != 0" in codec,
+            "index decoding must distinguish unsupported versions and reject malformed/trailing data")
+    require("content-index.v1" in repository and "indexContext(vaultId, generation)" in repository,
+            "index ciphertext must use its dedicated Stage 2 AAD context, not the metadata context")
+    require(re.search(r"\binterface\s+VaultContentCrypto\s*\{", contracts) is not None and
+            "Aes256Key" not in contracts and "rawKey" not in contracts,
+            "the content-key bridge must not export key handles or raw key material")
+    require("StreamingAuthenticatedEncryption" in streaming_contract and "64 * 1024" in streaming_impl,
+            "Stage 2 must provide bounded-memory streaming AES-GCM through its existing crypto service")
+    require("cipher.updateAAD(aad)" in streaming_impl and "cipher.update(buffer, 0, count)" in streaming_impl and "cipher.doFinal()" in streaming_impl,
+            "streaming AES-GCM must authenticate context and require final tag verification")
+    require("MAGIC = byteArrayOf(0x4e, 0x56, 0x43, 0x4f)" in codec and "NONCE_BYTES = 12" in codec and "VERSION = 1" in codec,
+            "content objects must use an explicit versioned AES-GCM header and 96-bit nonce")
+    require("random.generateAes256KeyBytes()" in repository and "random.generateGcmNonce()" in repository and
+            "ITEM_KEY_PURPOSE" in repository,
+            "each streamed content object must use a fresh scoped data key and a dedicated wrapping purpose")
+    require("ACTION_OPEN_DOCUMENT" in picker and "VaultSourceSelectionId" in picker and
+            "FLAG_GRANT_PERSISTABLE_URI_PERMISSION" not in picker,
+            "source documents must be selected with SAF transiently and without persisting the source URI")
+    require("ConcurrentHashMap<VaultSourceSelectionId, Uri>" in picker and "SharedPreferences" not in picker,
+            "source URIs must remain one-shot in-memory data-layer handles")
+    require(".nvc" in storage and "OBJECT_PENDING_PREFIX" in storage and "renameDocument" in storage and
+            "FLAG_SUPPORTS_RENAME" in storage,
+            "object outputs must use generated names and same-directory temporary-to-final rename")
+    require("index-%020d.vxi" in storage and "before.generations.maxOrNull() != generation - 1" in storage and
+            "contentEquals(bytes)" in storage,
+            "index generations must be immutable, serialized, read-back-verified SAF snapshots")
+    require("VaultObjectCommitResult.AuthorizationExpired" in storage and
+            "VaultIndexFileCommitResult.AuthorizationExpired" in storage and "authorizationCheckpoint()" in storage,
+            "session expiry must be checked at both SAF object-finalization and index-commit boundaries")
+    require("VaultIndexRead.Missing" in index_repo and "VaultIndexRead.Corrupt" in index_repo and
+            "VaultIndexRead.UnsupportedVersion" in index_repo and "VaultIndexRead.ObjectsWithoutIndex" in index_repo,
+            "missing, empty, populated, corrupt, unsupported and objects-without-index outcomes must stay distinct")
+    require("files.generations.maxOrNull()" in index_repo and "return VaultIndexRead.Corrupt" in index_repo,
+            "a corrupt newest snapshot must fail closed rather than fall back to an older snapshot or empty state")
+    require("authorizationCheckpoint" in importer and "crypto.verifyObject" in importer and "index.addItem" in importer,
+            "imports must checkpoint existing authorization, validate finalized ciphertext, then add one index record")
+    require("validMetadata(metadata)" in importer and "SourceSizeMismatch" in importer,
+            "provider filename/MIME/size metadata must be validated against the streamed source size")
+    require("completed.clear()" in importer and "sources.discard(sourceId)" in importer and "encryptedItemKey" in repository,
+            "scoped item-key buffers and transient source handles must be cleared/discarded")
+    require("readBytes()" not in importer + storage + repository and "readAllBytes()" not in importer + storage + repository,
+            "arbitrary user file content must never be materialized as one byte array")
+    require("VaultImportResult.AuthorizationExpired" in view_model and "hasValidSession()" in view_model and
+            "SessionManager" in source(package / "domain/security/session/SessionContracts.kt"),
+            "import authorization and expiry must reuse the existing absolute-timeout session")
+    require("VaultSourcePickerContract" in activity and "sourceSelectionResult = vaultSourceSelectionResult" in activity,
+            "the Android picker result must pass only a domain-safe one-shot selection token into the existing UI")
+    require("index.items.size" in screen and "originalFilename" in screen and "onChooseSource" in screen,
+            "Stage 14 UI must show a basic authenticated item list/count and explicit picker action")
+    require(all(state in screen for state in (
+        "VaultIndexRead.Missing", "VaultIndexRead.Ready", "VaultIndexRead.Corrupt",
+        "VaultIndexRead.UnsupportedVersion", "VaultIndexRead.Unavailable", "VaultIndexRead.AccessDenied",
+        "VaultIndexRead.ObjectsWithoutIndex", "VaultIndexRead.VaultUnavailable",
+    )), "the vault UI must render each distinct authenticated index outcome")
+    require("private val mutex = Mutex()" in importer and "private val mutex = Mutex()" in index_repo,
+            "conflicting imports and index writes must be serialized in-process")
+    require("override val vaultRepository: VaultRepository by lazy" in container and
+            "DefaultVaultIndexRepository(" in container and "DefaultVaultImportRepository(" in container and
+            "vaultContentCrypto" in container,
+            "Stage 14 DI must share the single Stage 13 repository and Stage 2 crypto graph")
+    require("no network" in docs and "no plaintext" in docs and "stage 18" in docs,
+            "vault foundation documentation must define privacy and deferred-scope limits")
+    require("unindexed orphan" in stage14_docs and "64 kib" in stage14_docs and "stage 15" in stage14_docs and
+            "stage 18" in stage14_docs,
+            "Stage 14 documentation must define bounded streaming, orphan behavior, and scope boundaries")
+    require("stage14.md" in docs and "stage 14" in readme and "file import" in readme and "docs/vault/readme.md" in readme,
+            "README must describe the delivered Stage 14 import scope and vault documentation")
+    require(not re.search(r"\bclass\s+\w*(?:Album|Trash|Restore|Thumbnail|Recovery)\w*", item + contracts + importer + screen),
+            "Stage 14 must not implement Stage 15–18 presentation, trash, restore or recovery features")
+
+    require("deleteDocument" not in importer and "resolver.delete" not in importer and
+            "openOutputStream" not in importer,
+            "the import orchestrator must never mutate source documents")
+    require("Log." not in importer and "println(" not in importer and "Timber." not in importer,
+            "import orchestration must not log source identifiers, filenames, keys, or file content")
+
+def verify_vault_presentation_architecture(root: Path) -> None:
+    """Stage 15 presentation safety: authenticated metadata, bounded volatile previews, and cleanup."""
+    package = root / "app/src/main/java/com/ashishkumar/nivara"
+    domain = package / "domain/vault/content"
+    data = package / "data/vault"
+    classifier = source(domain / "VaultContentPresentation.kt")
+    gateway = source(domain / "VaultContentPresentationGateway.kt")
+    adapter = source(data / "AndroidVaultContentPresentationRepository.kt")
+    decoder = source(data / "AndroidVaultImageDecoder.kt")
+    view_model = source(package / "ui/vault/VaultItemViewerViewModel.kt")
+    screen = source(package / "ui/vault/VaultScreen.kt")
+    app = source(package / "ui/NivaraApp.kt")
+    activity = source(package / "MainActivity.kt")
+    classifier_test = source(root / "app/src/test/java/com/ashishkumar/nivara/domain/vault/content/VaultContentClassifierTest.kt")
+    viewer_test = source(root / "app/src/test/java/com/ashishkumar/nivara/ui/vault/VaultItemViewerViewModelTest.kt")
+    crypto_test = source(root / "app/src/test/java/com/ashishkumar/nivara/data/vault/DefaultVaultRepositoryTest.kt")
+    decoder_test = source(root / "app/src/androidTest/java/com/ashishkumar/nivara/data/vault/AndroidVaultImageDecoderInstrumentedTest.kt")
+    presentation_test = source(root / "app/src/androidTest/java/com/ashishkumar/nivara/data/vault/AndroidVaultContentPresentationInstrumentedTest.kt")
+    docs = source(root / "docs/vault/stage15.md").lower()
+    readme = source(root / "README.md").lower()
+
+    for path in sorted(domain.glob("*.kt")):
+        text = source(path)
+        require(not re.search(r"^\s*import\s+android\.", text, re.MULTILINE),
+                f"Android dependency in Stage 15 content domain: {path.name}")
+    require("classify(item: VaultItem): VaultContentClassification = classify(item.originalMimeType)" in classifier,
+            "content type must come only from the authenticated original MIME metadata")
+    require("VaultContentCategory.OTHER, null" in classifier and "VaultItemValidation::validateMimeType" in classifier,
+            "missing and invalid MIME values must conservatively become Other/Unknown")
+    require("originalFilename" not in classifier and "substringAfterLast" not in classifier,
+            "classification must not infer content from filenames or extensions")
+    require("data class VaultItem" not in classifier and "originalMimeType =" not in classifier,
+            "presentation classification must not modify or duplicate persisted item metadata")
+    require("import android." not in gateway and "VaultPresentationHandle" in gateway and
+            "java.io.InputStream" not in gateway and "Cipher" not in gateway,
+            "presentation domain contracts must be Android-free and expose only opaque handles and typed values")
+    require("decryptObjectToQuarantine" in adapter and "AuthenticationFailed" in adapter and
+            "copyBytes()" in adapter and "quarantine.wipe()" in adapter,
+            "plaintext previews must remain quarantined until Stage 14 streaming GCM finalization succeeds")
+    require("MAX_IMAGE_COMPRESSED_BYTES" in adapter and "MAX_TEXT_BYTES" in adapter and
+            "WipingBoundedOutputStream" in adapter and "inSampleSize = sample" in decoder and
+            "MAX_IMAGE_RENDER_DIMENSION" in decoder,
+            "image and text rendering must use bounded volatile buffers and sampled image decoding")
+    require(not any(token in adapter for token in (
+        "FileOutputStream", "MediaPlayer", "PdfRenderer", "cacheDir", "File.createTempFile",
+        "openOutputStream", "readBytes()", "readAllBytes()",
+    )), "viewer must not stage plaintext files, media, documents, or unbounded content to disk/memory")
+    require("PreviewKind.IMAGE" in adapter and "PreviewKind.TEXT" in adapter and
+            "PreviewKind.PDF" in classifier and "PreviewKind.AUDIO" in classifier and
+            "PreviewKind.VIDEO" in classifier and "return@withContext VaultPresentationOpenResult.Unsupported" in adapter,
+            "only bounded image/text previews may be implemented; other recognized MIME classes stay explicitly unsupported")
+    require("classificationUsesMimeNotFilename" in classifier_test and
+            "quickLockClosesActiveResource" in viewer_test and "closeDuringOpenClosesAHandle" in viewer_test and
+            "unsupportedEncryptedObjectVersion" in viewer_test and
+            "decryptObjectToQuarantine" in crypto_test and "wideImageIsSampledToTheConfiguredRenderDimension" in decoder_test and
+            "quickLockClosesPreviewResourceAfterSuccessfulGatewayOpen" in presentation_test,
+            "Stage 15 must include JVM classification/session/crypto tests and instrumented decoder/resource-cleanup tests")
+    require("sessions.currentState() is SessionState.Authenticated" in adapter and
+            "sessions.mayAccessSensitiveContent()" in adapter and "checkpoint()" in adapter and
+            "sessions.sessionState.collect" in adapter and "closeAll()" in adapter,
+            "opening must reuse an existing authorized session and close active resources on invalidation")
+    require("currentSession == null" in adapter and "previousSession != currentSession" in adapter,
+            "a quickly replaced authenticated session must also invalidate resources despite StateFlow conflation")
+    require("authenticatePrimary" not in adapter and "authenticateBiometric" not in adapter and "lockNow" not in adapter,
+            "viewer adapter must not establish, refresh, or lock sessions")
+    require("lockAndClose()" in view_model and "gateway.close" in view_model and
+            "onActivityPaused() = close()" in view_model,
+            "viewer ViewModel must release opaque handles on Quick Lock, expiry, lifecycle pause, and close")
+    require("previous != null && previous != current" in view_model and
+            "replacedAuthenticatedSessionClosesViewer" in viewer_test,
+            "a replaced session must close viewer handles even if StateFlow conflates the unauthenticated transition")
+    state_decl = view_model.split("data class VaultItemViewerUiState(", 1)[1].split("\n)", 1)[0]
+    require(not re.search(r"\b(?:InputStream|OutputStream|Cipher|SecretKey|Aes256Key|ByteArray|CharArray|Bitmap|Uri|File)\b", state_decl),
+            "viewer UI state must not carry streams, ciphers, keys, plaintext buffers, or platform handles")
+    require("onDispose" in screen and "model.close()" in screen and "ON_PAUSE" in screen and
+            "gateway.close" not in screen,
+            "Compose must deterministically close the ViewModel-owned handle on disposal and app pause")
+    require("SecureScreenEffect()" in screen,
+            "the sensitive vault destination must reuse the existing screenshot/recents protection effect")
+    require("VaultContentClassifier.classify" in screen and "originalMimeType" in screen and
+            "UnsupportedContent()" in screen and "unindexedObjects" in screen and "unfinished" in screen.lower(),
+            "vault UI must show classified item metadata and preserve explicit unsupported and inventory diagnostics")
+    require("vaultContentPresentationGateway" in app and "vaultContentPresentationGateway" in activity,
+            "Stage 15 presentation must be wired through the existing app graph without another repository architecture")
+    require("no plaintext cache" in docs and "not supported" in docs and "no permissions" in docs and
+            "quick lock" in docs and "stage 16" in docs,
+            "Stage 15 documentation must state unsupported formats, security/resource limits, and deferred scope")
+    require("stage15.md" in readme and "bounded image" in readme and "audio/video" in readme,
+            "README must make bounded image/text support and unsupported media behavior accurate")
+
+
+def verify_vault_organization_architecture(root: Path) -> None:
+    """Stage 16 organization contracts, persistence, UI, and existing security-boundary checks."""
+    package = root / "app/src/main/java/com/ashishkumar/nivara"
+    domain = package / "domain/vault/content"
+    data = package / "data/vault"
+    ui = package / "ui/vault"
+    model_path = domain / "VaultOrganization.kt"
+    codec_path = domain / "VaultOrganizationCodec.kt"
+    contracts_path = domain / "VaultIndexContracts.kt"
+    model = source(model_path)
+    codec = source(codec_path)
+    contracts = source(contracts_path)
+    crypto = source(data / "DefaultVaultRepository.kt")
+    organization_repository = source(data / "DefaultVaultOrganizationRepository.kt")
+    storage = source(data / "SafVaultContentStorage.kt")
+    root_storage = source(data / "SafVaultStorage.kt")
+    view_model = source(ui / "VaultViewModel.kt")
+    screen = source(ui / "VaultScreen.kt")
+    container = source(package / "di/NivaraContainer.kt")
+    nav = source(package / "ui/NivaraApp.kt")
+    readme = source(root / "README.md").lower()
+    vault_docs = source(root / "docs/vault/README.md").lower()
+    stage_docs = source(root / "docs/vault/stage16.md").lower()
+
+    for path in (model_path, codec_path, contracts_path):
+        text = source(path)
+        require(not re.search(r"^\s*import\s+android\.", text, re.MULTILINE),
+                f"Android dependency in Stage 16 domain contract: {path.name}")
+    for required in ("value class VaultAlbumId", "class VaultAlbum(", "VaultItemId",
+                     "memberItemIds", "MAX_CODE_POINTS = 100", "MAX_ALBUMS = 1_000",
+                     "MAX_ITEMS_PER_ALBUM = 20_000", "MAX_TOTAL_MEMBERSHIPS = 100_000",
+                     "AlreadyMember", "VaultAlbumMember.Stale", "IndexUnreadable", "NoMatches",
+                     "Field.NAME", "Field.SIZE", "Field.IMPORT_TIME", "Field.TYPE",
+                     "thenBy { it.item.id.value }", "originalFilename", "originalMimeType",
+                     "VaultContentClassifier.classify", "item.originalFilename", "item.originalMimeType",
+                     "IndexMissing", "UnsupportedIndex"):
+        require(required in model, f"Stage 16 organization contract is missing {required!r}")
+    require("require(members.toSet().size == members.size)" in model and
+            "itemId in album.memberItemIds" in organization_repository and
+            "VaultAlbumMutationResult.AlreadyMember" in organization_repository,
+            "duplicate memberships must be explicitly rejected as AlreadyMember without changing state")
+    require("data class Stale(override val itemId: VaultItemId)" in model and
+            "memberItemIds.map" in model and "VaultAlbumMembershipResolver" in model,
+            "stale album references must be returned explicitly and must not be pruned by ordinary reads")
+    require("MAX_PLAINTEXT_BYTES = 8 * 1024 * 1024" in model and
+            "encoded.size !in HEADER_BYTES..VaultOrganizationLimits.MAX_PLAINTEXT_BYTES" in codec and
+            "input.available() != 0" in codec and "DecodeResult.Unsupported" in codec and
+            "previousAlbumId" in codec,
+            "organization decoding must be versioned, strictly validated, deterministic, and bounded")
+    require("VaultOrganizationEnvelopeCodec" in codec and "generation" in codec,
+            "organization ciphertext records must bind and verify their generation")
+    require("encryptOrganization" in contracts and "decryptOrganization" in contracts and
+            "VaultOrganizationLimits.MAX_PLAINTEXT_BYTES" in crypto and
+            "nivara.vault.organization-metadata.v1" in crypto and
+            "organizationContext(vaultId, generation)" in crypto and "withContentKey(vaultId)" in crypto,
+            "organization records must reuse the existing vault key with a distinct generation-bound crypto purpose")
+    require("data/organization" in storage or 'ORGANIZATION_DIRECTORY = "organization"' in storage,
+            "organization records must be stored under the existing vault data root")
+    require("DocumentsContract.renameDocument" in storage and "firstReadback.contentEquals(bytes)" in storage and
+            "finalReadback.contentEquals(bytes)" in storage and "pruneOrganizationFiles" in storage and
+            "discardOrganizationFile" in storage and
+            "authorizationCheckpoint()" in storage and "MAX_ORGANIZATION_GENERATIONS" in storage,
+            "organization writes require bounded atomic generation commits, readback, authorization, and post-verification pruning")
+    require('setOf("index", "objects", "organization")' in root_storage and
+            "setOf(INDEX_DIRECTORY, OBJECTS_DIRECTORY, ORGANIZATION_DIRECTORY)" in storage,
+            "strict SAF structural allow-lists must recognize only the new organization directory")
+    verified_position = organization_repository.find("verified.snapshot != next")
+    prune_position = organization_repository.find("storage.pruneOrganizationFiles(keep, authorizationCheckpoint)")
+    require(prune_position > verified_position >= 0 and "takeLast(2).toSet()" in organization_repository and
+            "storage.discardOrganizationFile(next.generation)" in organization_repository,
+            "generation pruning may occur only after authenticated readback; failed verification preserves prior generations")
+    require("SessionManager" in view_model and "hasValidSession()" in view_model and
+            all(token in view_model for token in ("createAlbum", "renameAlbum", "deleteAlbum", "addMembership", "removeMembership")) and
+            all(call in view_model for call in (
+                "repository.createAlbum(vaultId, name, checkpoint)",
+                "repository.renameAlbum(vaultId, albumId, name, checkpoint)",
+                "repository.deleteAlbum(vaultId, albumId, checkpoint)",
+                "repository.addMembership(vaultId, albumId, itemId, checkpoint)",
+                "repository.removeMembership(vaultId, albumId, itemId, checkpoint)",
+            )) and
+            "authorizationCheckpoint" in organization_repository,
+            "every organization mutation must use the existing SessionManager authorization checkpoint")
+    require(all(token in screen for token in ("All Items", "Albums", "Search", "Create album", "Rename", "Delete album",
+                     "Add / remove album membership", "Remove reference", "VaultItemSearch.search")),
+            "the existing vault screen must expose All Items, Albums, Search, and album/membership controls")
+    require(len(re.findall(r"(?m)^\s*VaultItemViewerContent\(", screen)) == 1 and
+            "selectedItemId = it.id" in screen and
+            "gateway = contentPresentationGateway" in screen,
+            "all organization collection selections must continue through the single Stage 15 item-ID viewer path")
+    require("openObject" not in model and "decrypt" not in model and "openObject" not in organization_repository and
+            "decryptObject" not in organization_repository,
+            "search, sorting, and albums must not open or decrypt item content")
+    require("vaultOrganizationRepository" in container and "vaultOrganizationRepository" in nav,
+            "the existing dependency graph and navigation must bind the single organization repository")
+    require("stage16" in readme and "albums" in vault_docs and "sessionmanager" in stage_docs and
+            "authorization callback" in stage_docs and "authenticated index" in stage_docs and "stale" in stage_docs,
+            "README and vault documentation must describe Stage 16 semantics and truthful security boundaries")
+    require((root / "app/src/test/java/com/ashishkumar/nivara/domain/vault/content/VaultOrganizationTest.kt").is_file() and
+            (root / "app/src/test/java/com/ashishkumar/nivara/data/vault/DefaultVaultOrganizationRepositoryTest.kt").is_file() and
+            (root / "app/src/test/java/com/ashishkumar/nivara/ui/vault/VaultViewModelOrganizationTest.kt").is_file() and
+            (root / "app/src/androidTest/java/com/ashishkumar/nivara/data/vault/VaultOrganizationContractInstrumentedTest.kt").is_file(),
+            "Stage 16 domain, persistence, ViewModel, and instrumented tests must be present")
+
+
 def main() -> None:
     manifest_path = ROOT / "app/src/main/AndroidManifest.xml"
     try:
@@ -390,6 +910,11 @@ def main() -> None:
     verify_launcher_manifest(manifest)
     verify_camouflage_manifest(manifest, ROOT)
     verify_camouflage_architecture(ROOT)
+    verify_vault_manifest(manifest)
+    verify_vault_architecture(ROOT, manifest)
+    verify_vault_content_architecture(ROOT)
+    verify_vault_presentation_architecture(ROOT)
+    verify_vault_organization_architecture(ROOT)
 
     query_intents = manifest.findall("queries/intent")
     require(
@@ -531,7 +1056,7 @@ def main() -> None:
     readme = source(ROOT / "README.md").lower()
     for required in ("custom launcher", "app drawer", "normal home settings", "stage 12", "remain installed and functional"):
         require(required in readme, f"README must document {required!r}")
-    print("PASS: App Lock, hidden-app, launcher and camouflage/recovery contracts, persistence, auth boundaries, and permissions.")
+    print("PASS: Stages 13–16 vault organization, search, sorting, viewer integration, authenticated import/index, App Lock, hidden-app, launcher, persistence, auth, and permission contracts.")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,24 @@ import com.ashishkumar.nivara.data.security.AesGcmKeyWrappingService
 import com.ashishkumar.nivara.data.security.JcaAesGcmEncryption
 import com.ashishkumar.nivara.data.security.JcaCredentialKeyDeriver
 import com.ashishkumar.nivara.data.security.JcaSecureRandomSource
+import com.ashishkumar.nivara.data.vault.AndroidVaultLocationStore
+import com.ashishkumar.nivara.data.vault.DefaultVaultRepository
+import com.ashishkumar.nivara.data.vault.SafVaultStorage
+import com.ashishkumar.nivara.data.vault.SafVaultContentStorage
+import com.ashishkumar.nivara.data.vault.DefaultVaultIndexRepository
+import com.ashishkumar.nivara.data.vault.DefaultVaultOrganizationRepository
+import com.ashishkumar.nivara.data.vault.DefaultVaultImportRepository
+import com.ashishkumar.nivara.data.vault.AndroidVaultContentPresentationRepository
+import com.ashishkumar.nivara.domain.vault.content.VaultContentPresentationGateway
+import com.ashishkumar.nivara.data.vault.AndroidVaultSourceDocumentProvider
+import com.ashishkumar.nivara.data.vault.PendingSourceDocuments
+import com.ashishkumar.nivara.data.vault.VaultRootSelectionHandler
+import com.ashishkumar.nivara.domain.vault.VaultRepository
+import com.ashishkumar.nivara.domain.vault.content.VaultContentCrypto
+import com.ashishkumar.nivara.domain.vault.content.VaultContentStorage
+import com.ashishkumar.nivara.domain.vault.content.VaultIndexRepository
+import com.ashishkumar.nivara.domain.vault.content.VaultOrganizationRepository
+import com.ashishkumar.nivara.domain.vault.content.VaultImportRepository
 import com.ashishkumar.nivara.domain.credentials.DefaultPrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialStore
@@ -64,6 +82,13 @@ interface NivaraContainer {
     val applicationRepository: ApplicationRepository
     val applicationIconProvider: AndroidApplicationIconProvider
     val hiddenApplicationRepository: HiddenApplicationRepository
+    val vaultRepository: VaultRepository
+    val vaultIndexRepository: VaultIndexRepository
+    val vaultOrganizationRepository: VaultOrganizationRepository
+    val vaultImportRepository: VaultImportRepository
+    val vaultContentPresentationGateway: VaultContentPresentationGateway
+    val pendingVaultSources: PendingSourceDocuments
+    val vaultRootSelectionHandler: VaultRootSelectionHandler
     val usageAccessRepository: UsageAccessRepository
     val overlayCapabilityRepository: OverlayCapabilityRepository
     val protectedApplicationRepository: ProtectedApplicationRepository
@@ -89,6 +114,49 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
     }
     override val hiddenApplicationRepository: HiddenApplicationRepository by lazy {
         AndroidHiddenApplicationRepository.create(applicationContext)
+    }
+    private val vaultLocationStore by lazy { AndroidVaultLocationStore(applicationContext) }
+    override val vaultRootSelectionHandler: VaultRootSelectionHandler by lazy {
+        VaultRootSelectionHandler(applicationContext, vaultLocationStore)
+    }
+    private val safVaultStorage by lazy { SafVaultStorage(applicationContext, vaultLocationStore) }
+    override val vaultRepository: VaultRepository by lazy {
+        DefaultVaultRepository(
+            storage = safVaultStorage,
+            encryption = encryption,
+            keyWrapping = keyWrapping,
+            deviceKeyStore = deviceKeyStore,
+            random = secureRandom,
+        )
+    }
+    private val safVaultContentStorage by lazy {
+        SafVaultContentStorage(applicationContext, vaultLocationStore, secureRandom)
+    }
+    private val vaultContentCrypto by lazy { vaultRepository as VaultContentCrypto }
+    override val vaultIndexRepository: VaultIndexRepository by lazy {
+        DefaultVaultIndexRepository(safVaultContentStorage, vaultContentCrypto)
+    }
+    override val vaultOrganizationRepository: VaultOrganizationRepository by lazy {
+        DefaultVaultOrganizationRepository(safVaultContentStorage, vaultContentCrypto, vaultIndexRepository, secureRandom)
+    }
+    override val pendingVaultSources: PendingSourceDocuments by lazy { PendingSourceDocuments(secureRandom) }
+    override val vaultImportRepository: VaultImportRepository by lazy {
+        DefaultVaultImportRepository(
+            sources = AndroidVaultSourceDocumentProvider(applicationContext, pendingVaultSources),
+            objects = safVaultContentStorage,
+            crypto = vaultContentCrypto,
+            index = vaultIndexRepository,
+            random = secureRandom,
+        )
+    }
+    override val vaultContentPresentationGateway: VaultContentPresentationGateway by lazy {
+        AndroidVaultContentPresentationRepository(
+            storage = safVaultContentStorage,
+            crypto = vaultContentCrypto,
+            index = vaultIndexRepository,
+            sessions = sessionManager,
+            random = secureRandom,
+        )
     }
     override val usageAccessRepository: UsageAccessRepository by lazy {
         AndroidUsageAccessRepository(applicationContext)
