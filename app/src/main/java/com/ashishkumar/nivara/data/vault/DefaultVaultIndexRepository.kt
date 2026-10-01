@@ -341,13 +341,13 @@ class DefaultVaultIndexRepository(
                 return VaultIndexRead.Corrupt
             }
         }
-        encoded.fill(0)
         if (outer.generation != generation) {
             outer.encryptedRecord.fill(0)
+            encoded.fill(0)
             return VaultIndexRead.Corrupt
         }
         val plaintext = try {
-            when (val decrypted = crypto.decryptIndex(vaultId, generation, outer.encryptedRecord)) {
+            when (val decrypted = crypto.decryptIndex(vaultId, generation, encoded)) {
                 is VaultContentCryptoResult.Success -> decrypted.value
                 is VaultContentCryptoResult.VaultUnavailable -> return VaultIndexRead.VaultUnavailable(decrypted.status)
                 is VaultContentCryptoResult.UnsupportedVersion -> return VaultIndexRead.UnsupportedVersion(decrypted.version ?: -1)
@@ -356,7 +356,10 @@ class DefaultVaultIndexRepository(
                 VaultContentCryptoResult.SourceSizeMismatch,
                 VaultContentCryptoResult.OperationFailed -> return VaultIndexRead.Unavailable
             }
-        } finally { outer.encryptedRecord.fill(0) }
+        } finally {
+            outer.encryptedRecord.fill(0)
+            encoded.fill(0)
+        }
         try {
             return when (val decoded = VaultIndexCodec.decode(plaintext)) {
                 is VaultIndexCodec.DecodeResult.Decoded -> {
