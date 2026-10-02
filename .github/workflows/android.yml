@@ -73,6 +73,7 @@ jobs:
         if: success() || failure()
         run: |
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import os
           import pathlib
           import xml.etree.ElementTree as ET
 
@@ -88,7 +89,14 @@ jobs:
           print('## JVM test results')
           print(f"- Test cases: {totals['tests']}")
           print(f"- Failures: {totals['failures']}; errors: {totals['errors']}; skipped: {totals['skipped']}")
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'jvm-test-count.txt').write_text(
+              f"{totals['tests']} test cases; {totals['failures']} failures; {totals['errors']} errors; {totals['skipped']} skipped",
+              encoding='utf-8',
+          )
           PY
+          if [[ -f "$RUNNER_TEMP/jvm-test-count.txt" ]]; then
+            echo "::notice title=JVM test results::$(cat "$RUNNER_TEMP/jvm-test-count.txt")"
+          fi
       - name: Inspect release APK
         shell: bash
         run: |
