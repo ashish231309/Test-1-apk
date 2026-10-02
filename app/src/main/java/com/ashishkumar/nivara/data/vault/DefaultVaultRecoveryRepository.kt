@@ -185,7 +185,7 @@ class DefaultVaultRecoveryRepository(
         catch (_: Exception) { return ExistingVaultRecordsValidation.UNAVAILABLE }
         when (index) {
             is VaultIndexRead.Ready -> {
-                val diagnostics = index.diagnostics ?: return ExistingVaultRecordsValidation.UNAVAILABLE
+                val diagnostics = index.contentDiagnostics ?: return ExistingVaultRecordsValidation.UNAVAILABLE
                 if (diagnostics.missingContent != 0 || diagnostics.unindexedObjects != 0 ||
                     diagnostics.unfinishedObjects != 0
                 ) return ExistingVaultRecordsValidation.DAMAGED
