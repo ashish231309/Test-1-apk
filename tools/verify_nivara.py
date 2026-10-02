@@ -445,8 +445,11 @@ def verify_vault_architecture(root: Path, manifest: ET.Element) -> None:
         require(not forbidden_crypto_implementations.search(text),
                 f"vault data code must reuse Stage 2 cryptography, not implement another primitive: {path.name}")
         credential_pattern = r"\b(?:PrimaryCredentialService|PrimaryCredentialStore|CredentialKeyDeriver|BiometricAuthenticator|password|pin|pattern)\b"
-        if path.name != "AndroidVaultContentPresentationRepository.kt":
+        if path.name == "DefaultVaultRecoveryRepository.kt":
+            credential_pattern = r"\b(?:PrimaryCredentialService|PrimaryCredentialStore|CredentialKeyDeriver|BiometricAuthenticator|password|pin|pattern)\b"
+        elif path.name != "AndroidVaultContentPresentationRepository.kt":
             credential_pattern = r"\b(?:PrimaryCredentialService|PrimaryCredentialStore|CredentialKeyDeriver|BiometricAuthenticator|CharArray|password|pin|pattern)\b"
+        if path.name != "AndroidVaultContentPresentationRepository.kt":
             require(not re.search(r"\b(?:SessionManager|sessionManager\.(?:authenticate|lockNow|establish))\b", text),
                     f"vault storage must not create or control an authentication session: {path.name}")
         require(not re.search(credential_pattern, text, re.IGNORECASE),
@@ -560,6 +563,129 @@ def verify_vault_architecture(root: Path, manifest: ET.Element) -> None:
         require(required in readme, f"README must describe current vault scope ({required!r})")
     require("\n".join(path.read_text(encoding="utf-8") for path in ui_files).strip(),
             "vault UI foundation must contain an explicit state consumer")
+
+
+def verify_vault_recovery_architecture(root: Path) -> None:
+    """Stage 18 recovery remains a separate, explicit wrapper around the unchanged vault content key."""
+    package = root / "app/src/main/java/com/ashishkumar/nivara"
+    domain = package / "domain/vault"
+    data = package / "data/vault"
+    ui = package / "ui/vault"
+    recovery_domain = "\n".join(source(path) for path in sorted(domain.glob("VaultRecovery*.kt")))
+    vault_contracts = source(domain / "VaultContracts.kt")
+    repo = source(data / "DefaultVaultRecoveryRepository.kt")
+    crypto = source(data / "DefaultVaultRepository.kt")
+    saf = source(data / "SafVaultStorage.kt")
+    content_storage = source(data / "SafVaultContentStorage.kt")
+    key_store = source(data / "AndroidVaultKeyAccessStore.kt")
+    view_model = source(ui / "VaultViewModel.kt")
+    recovery_ui = source(ui / "VaultRecoveryContent.kt")
+    screen = source(ui / "VaultScreen.kt")
+    container = source(package / "di/NivaraContainer.kt")
+    readme = source(root / "README.md").lower()
+    vault_docs = source(root / "docs/vault/README.md").lower()
+    stage18_docs = source(root / "docs/vault/stage18.md").lower()
+    audit = source(root / "docs/vault/stage18-architecture-audit.md").lower()
+
+    require(bool(recovery_domain), "Android-free typed recovery contracts are required")
+    for path in sorted(domain.glob("VaultRecovery*.kt")):
+        text = source(path)
+        require(not re.search(r"^\s*import\s+android\.", text, re.MULTILINE),
+                f"Android imports are forbidden in recovery domain contracts: {path.name}")
+    for required in ("VaultRecoveryCodeCodec", "KEY_BYTES = 32", "MAX_INPUT_CHARS", "SecureRandomSource",
+                     "KeyProtection.RECOVERY", "RECOVERY_WRAP_PURPOSE", "VaultRecoveryRecordCodec",
+                     "CURRENT_VERSION = 1", "UnsupportedVersion", "VaultRecoveryResult", "data class RecoveryRequired(val vaultId: VaultId)",
+                     "verifyPreparedRecoveryRecord", "validateExistingRecords"):
+        all_sources = recovery_domain + "\n" + vault_contracts + "\n" + repo + "\n" + crypto
+        require(required in all_sources, f"Stage 18 recovery contract is incomplete ({required})")
+    require("generateRecoveryKeyBytes()" in repo and "recoveryKey?.fill(0)" in repo,
+            "recovery material must be generated from secure randomness and cleared")
+    require("VaultRecoveryRecordCodec.encode" in repo and
+            "commitRecoveryRecordAtomically(pending.vaultId" in repo and
+            "confirmSetup" in repo,
+            "external recovery metadata must be committed only after explicit setup confirmation")
+    require("MAX_RECORD_BYTES = 16 * 1024" in recovery_domain and
+            "MAX_WRAPPED_KEY_BYTES" in recovery_domain and "buffer.remaining()" in recovery_domain,
+            "recovery metadata must be strictly bounded and reject trailing/malformed data")
+    require("vault.nvrec" in saf and "vault.nvrec.pending" in saf and
+            "renameDocument" in saf and "contentEquals" in saf and
+            "expectedVaultId" in saf and "VaultRecoveryFile.Missing -> Unit" in saf and
+            "VaultRecoveryFile.Present -> return" in saf and
+            "Document.FLAG_SUPPORTS_RENAME" in saf and
+            "tempDocument.flags and Document.FLAG_SUPPORTS_RENAME" in saf and
+            "DocumentsContract.renameDocument(resolver, temporary, RECOVERY_RECORD_NAME)" in saf,
+            "recovery slot must use bounded SAF-only temporary verification and identity checks")
+    require("vault.nvrec" in content_storage and "vault.nvrec.pending" in content_storage,
+            "content storage must recognize the separate recovery sidecar and fail closed on pending writes")
+    require("reconnectWithRecoveryKey" in crypto and "VaultHeaderCodec.decode" in crypto and
+            "recoveryScopedKey" in crypto and "initializeEmpty(" not in crypto and "discardIndexFile" not in crypto,
+            "recovery crypto must authenticate the existing header and scope recovered-key use without index repair")
+    require("VaultIndexRepository" in repo and "VaultOrganizationRepository" in repo and
+            "indexRepository.inspect(vaultId)" in repo and "organizationRepository.inspect(vaultId)" in repo,
+            "recovery must validate existing authenticated index and organization records")
+    require("initializeEmpty(" not in repo and "initializeAtomically(" not in repo and
+            "commitRecoveryRecordAtomically" in repo,
+            "recovery orchestration must never initialize, rebuild, or repair the selected vault")
+    require("KeyProtection.ANDROID_KEYSTORE" in crypto and "KeyProtection.RECOVERY" in crypto and
+            "keyWrapping.wrap(" in crypto and "keyWrapping.unwrap(" in crypto,
+            "recovery must wrap and authenticate the existing content key with the existing Stage 2 primitive")
+    forbidden_crypto = re.compile(
+        r"\b(?:PBKDF2|CredentialKeyDeriver|PrimaryCredentialService|PrimaryCredentialStore|"
+        r"deriveKey\s*\(|KeyProtection\.CREDENTIAL_DERIVED|masterKey|cloud|server|accountRecovery)\b",
+        re.IGNORECASE,
+    )
+    require(not forbidden_crypto.search(recovery_domain + "\n" + repo + "\n" + crypto),
+            "recovery must not derive keys from credentials or add a master/cloud/account recovery path")
+    require("java.io.File" not in recovery_domain and "android.net.Uri" not in recovery_domain and
+            "ContentResolver" not in recovery_domain,
+            "recovery domain and UI contracts must not expose filesystem paths or Android storage handles")
+    require("VaultKeyAccessRecord" in key_store and "wrapped_content_key" in key_store and
+            "Base64.getEncoder().encodeToString(wrapper)" in key_store and
+            "recoveryCode" not in key_store and "recovery_key" not in key_store.lower(),
+            "app-private reconnect persistence may contain only the device-wrapped content-key envelope")
+    require("sessionManager.currentState() is SessionState.Authenticated" in view_model and
+            "sessionManager.mayAccessSensitiveContent()" in view_model and
+            "repository.recover(codeChars)" in view_model,
+            "recovery UI must retain the existing session gate and must not create a session")
+    recovery_flow = view_model[view_model.find("fun recover("):view_model.find("private fun setRecoveryMessage")]
+    require("initialize()" not in recovery_flow and "authenticatePrimary" not in recovery_flow and
+            "authenticateBiometric" not in recovery_flow,
+            "recovery must neither initialize a selected location nor authenticate/create an app session")
+    require("codeChars.fill('\\u0000')" in recovery_flow and "rememberSaveable" not in recovery_ui and
+            "SavedStateHandle" not in view_model,
+            "recovery input must be cleared and never moved into saved UI state")
+    require(not re.search(r"\b(?:android\.net\.Uri|java\.io\.File|ContentResolver|DocumentsContract)\b",
+                          recovery_ui + "\n" + view_model),
+            "recovery UI must not receive SAF handles, URIs, or raw filesystem paths")
+    require("SecureRandomSource" in repo and "generateRecoveryKeyBytes()" in repo and
+            "generateBytes(16)" in repo,
+            "recovery code and setup token must originate from the secure random source")
+    require("SecureScreenEffect()" in screen and "RecoveryCodeEntry" in screen and
+            "VaultStatus.RecoveryRequired" in screen and "VaultRecoverySetupContent" in screen,
+            "vault UI must expose explicit recovery and setup states behind secure-screen protection")
+    forbidden_ui = re.compile(r"\b(?:Log\.[A-Za-z]+|println\s*\(|ClipboardManager|LocalClipboardManager|"
+                              r"Intent\.ACTION_SEND|ACTION_SEND|FileProvider|ShareCompat)\b")
+    for path, text in ((ui / "VaultRecoveryContent.kt", recovery_ui), (ui / "VaultViewModel.kt", view_model)):
+        require(not forbidden_ui.search(text), f"recovery material must not be logged or automatically shared: {path.name}")
+    require("recoveryCode.fill('\\u0000')" in repo and "decodedKey?.fill(0)" in repo and
+            "codeChars.fill('\\u0000')" in view_model,
+            "recovery input and decoded key bytes must be cleared after recovery attempts")
+    require("Clear" not in repo and "deleteDocument" not in repo,
+            "recovery must not erase or silently repair an existing recovery record")
+    require("VaultIndexRead.Missing -> Unit" in repo and "VaultOrganizationRead.Ready" in repo,
+            "missing optional organization/index state must not be reconstructed and present invalid state must fail closed")
+    require("override val vaultRecoveryRepository" in container and
+            "AndroidVaultKeyAccessStore(applicationContext)" in container and
+            "DefaultVaultRecoveryRepository(" in container,
+            "one shared recovery repository and ciphertext-only reconnect store must be wired through the existing container")
+    require("256-bit" in stage18_docs and "no separate guessing throttle" in stage18_docs and
+            "rotation is not supported" in stage18_docs and "no canonical application-level recovery envelope" in audit,
+            "Stage 18 documentation must explain entropy/throttling, no rotation, and the Stage 2 audit finding")
+    require("stage18-architecture-audit.md" in vault_docs and "reinstall" in readme and
+            "stage 18" in readme,
+            "root and vault docs must link the recovery architecture and state the reconnect/reinstall boundary")
+    require(not re.search(r"\b(?:emptyTrash|emptyTrash|permanentDelete|reEncrypt|migrateVault|exportVault|backupVault|syncVault)\b", repo + "\n" + crypto),
+            "recovery must not add deletion, re-encryption, migration, export, backup, or sync")
 
 
 def verify_vault_content_architecture(root: Path) -> None:
@@ -1012,10 +1138,19 @@ def main() -> None:
     verify_camouflage_architecture(ROOT)
     verify_vault_manifest(manifest)
     verify_vault_architecture(ROOT, manifest)
+    verify_vault_recovery_architecture(ROOT)
     verify_vault_content_architecture(ROOT)
     verify_vault_presentation_architecture(ROOT)
     verify_vault_organization_architecture(ROOT)
     verify_vault_trash_architecture(ROOT)
+    required_stage18_tests = (
+        "app/src/test/java/com/ashishkumar/nivara/domain/vault/VaultRecoveryMaterialTest.kt",
+        "app/src/test/java/com/ashishkumar/nivara/data/vault/DefaultVaultRecoveryCryptographyTest.kt",
+        "app/src/test/java/com/ashishkumar/nivara/data/vault/DefaultVaultRecoveryRepositoryTest.kt",
+        "app/src/test/java/com/ashishkumar/nivara/ui/vault/VaultViewModelTest.kt",
+    )
+    require(all((ROOT / path).is_file() for path in required_stage18_tests),
+            "Stage 18 domain, cryptography, repository, and ViewModel recovery tests are required")
 
     query_intents = manifest.findall("queries/intent")
     require(
@@ -1157,7 +1292,7 @@ def main() -> None:
     readme = source(ROOT / "README.md").lower()
     for required in ("custom launcher", "app drawer", "normal home settings", "stage 12", "remain installed and functional"):
         require(required in readme, f"README must document {required!r}")
-    print("PASS: Stages 13–17 vault trash/restore, albums, search, sorting, viewer integration, authenticated import/index, App Lock, hidden-app, launcher, persistence, auth, and permission contracts.")
+    print("PASS: Stages 13–18 vault recovery/reconnection, trash/restore, albums, search, sorting, viewer integration, authenticated import/index, App Lock, hidden-app, launcher, persistence, auth, and permission contracts.")
 
 
 if __name__ == "__main__":

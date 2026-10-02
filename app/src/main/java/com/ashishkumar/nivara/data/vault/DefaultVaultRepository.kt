@@ -30,6 +30,17 @@ import com.ashishkumar.nivara.domain.vault.VaultInitializationFailure
 import com.ashishkumar.nivara.domain.vault.VaultInitializationResult
 import com.ashishkumar.nivara.domain.vault.VaultMetadataCodec
 import com.ashishkumar.nivara.domain.vault.VaultMetadataDecode
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryFile
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryRecordCodec
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryRecordDecode
+import com.ashishkumar.nivara.domain.vault.VaultKeyAccessRead
+import com.ashishkumar.nivara.domain.vault.VaultKeyAccessRecord
+import com.ashishkumar.nivara.domain.vault.VaultKeyAccessStore
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryCryptography
+import com.ashishkumar.nivara.domain.vault.ExistingVaultRecordsValidation
+import com.ashishkumar.nivara.domain.vault.RecoveryCryptographyFailure
+import com.ashishkumar.nivara.domain.vault.RecoveryReconnectKeyResult
+import com.ashishkumar.nivara.domain.vault.RecoveryWrapExistingKeyResult
 import com.ashishkumar.nivara.domain.vault.VaultRepository
 import com.ashishkumar.nivara.domain.vault.VaultStatus
 import com.ashishkumar.nivara.domain.vault.VaultStorage
@@ -37,6 +48,8 @@ import com.ashishkumar.nivara.domain.vault.VaultStorageCommitResult
 import com.ashishkumar.nivara.domain.vault.VaultStorageSnapshot
 import com.ashishkumar.nivara.domain.vault.VaultUnavailableReason
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.InputStream
@@ -51,8 +64,11 @@ class DefaultVaultRepository(
     private val keyWrapping: KeyWrappingService,
     private val deviceKeyStore: DeviceKeyStore,
     private val random: SecureRandomSource,
-) : VaultRepository, VaultContentCrypto {
+    private val keyAccessStore: VaultKeyAccessStore? = null,
+) : VaultRepository, VaultContentCrypto, VaultRecoveryCryptography {
     private val mutex = Mutex()
+    private val recoveryMutex = Mutex()
+    @Volatile private var recoveryScopedKey: RecoveryScopedKey? = null
 
     override suspend fun inspect(): VaultStatus = mutex.withLock { inspectLocked() }
 
@@ -64,6 +80,10 @@ class DefaultVaultRepository(
             VaultStatus.AccessDenied -> return@withLock VaultInitializationResult.AccessDenied
             is VaultStatus.Unavailable -> return@withLock VaultInitializationResult.Unavailable(current.reason)
             VaultStatus.CorruptMetadata -> return@withLock VaultInitializationResult.CorruptMetadata
+            is VaultStatus.RecoveryRequired -> return@withLock VaultInitializationResult.Unavailable(
+                VaultUnavailableReason.DEVICE_KEY_MISSING,
+            )
+            VaultStatus.NotAVault -> return@withLock VaultInitializationResult.InvalidStructure
             is VaultStatus.UnsupportedVersion -> return@withLock VaultInitializationResult.UnsupportedVersion(
                 current.component,
                 current.version,
@@ -140,6 +160,7 @@ class DefaultVaultRepository(
                 VaultStorageCommitResult.CleanupFailed -> VaultInitializationResult.Failed(
                     VaultInitializationFailure.STORAGE_CLEANUP,
                 )
+                VaultStorageCommitResult.RecoveryRecordExists -> VaultInitializationResult.InvalidStructure
             }
         } catch (failure: CancellationException) {
             throw failure
@@ -156,6 +177,320 @@ class DefaultVaultRepository(
             metadataBytes?.fill(0)
         }
     }
+
+    override suspend fun wrapExistingContentKey(
+        vaultId: VaultId,
+        recoveryKeyBytes: ByteArray,
+    ): RecoveryWrapExistingKeyResult = recoveryMutex.withLock {
+        if (recoveryKeyBytes.size != Aes256Key.KEY_BYTES) return@withLock RecoveryWrapExistingKeyResult.Failed
+        val snapshot = try { storage.inspect() }
+        catch (failure: CancellationException) { throw failure }
+        catch (_: SecurityException) { return@withLock RecoveryWrapExistingKeyResult.Unavailable }
+        catch (_: Exception) { return@withLock RecoveryWrapExistingKeyResult.Unavailable }
+        val available = snapshot as? VaultStorageSnapshot.Available
+            ?: return@withLock RecoveryWrapExistingKeyResult.Unavailable
+        if (available.unexpectedEntries || available.unexpectedDataEntries ||
+            available.dataDirectory != com.ashishkumar.nivara.domain.vault.VaultDirectoryEntry.DIRECTORY
+        ) return@withLock RecoveryWrapExistingKeyResult.NotReady
+        if (available.recoveryRecord !is VaultRecoveryFile.Missing) {
+            return@withLock RecoveryWrapExistingKeyResult.AlreadyConfigured
+        }
+        val metadataFile = available.metadata as? com.ashishkumar.nivara.domain.vault.VaultMetadataFile.Present
+            ?: return@withLock RecoveryWrapExistingKeyResult.NotReady
+        var existingWrapperBytes: ByteArray? = null
+        var contentKey: ByteArray? = null
+        var wrappedRecoveryEnvelope: ByteArray? = null
+        try {
+            val decoded = when (val value = VaultMetadataCodec.decode(metadataFile.bytes)) {
+                VaultMetadataDecode.Invalid -> return@withLock RecoveryWrapExistingKeyResult.Failed
+                is VaultMetadataDecode.UnsupportedVersion -> return@withLock RecoveryWrapExistingKeyResult.Failed
+                is VaultMetadataDecode.Supported -> value.metadata
+            }
+            if (decoded.vaultId != vaultId) return@withLock RecoveryWrapExistingKeyResult.NotReady
+            if (inspectMetadata(metadataFile.bytes) != VaultStatus.Ready(vaultId)) {
+                return@withLock RecoveryWrapExistingKeyResult.NotReady
+            }
+            val externalWrapper = decoded.wrappedContentKey
+            existingWrapperBytes = deviceWrappedKeyFor(vaultId, externalWrapper)
+            externalWrapper.fill(0)
+            val envelope = WrappedKeyEnvelope.decode(existingWrapperBytes)
+            if (envelope.protection != KeyProtection.ANDROID_KEYSTORE) {
+                return@withLock RecoveryWrapExistingKeyResult.Failed
+            }
+            val deviceKey = deviceKeyStore.getAes256Key(KEY_ALIAS)
+            contentKey = keyWrapping.unwrap(envelope, deviceKey, KeyProtection.ANDROID_KEYSTORE, keyContext(vaultId))
+            val currentContentKey = contentKey
+                ?: return@withLock RecoveryWrapExistingKeyResult.Failed
+            val recoveryKey = Aes256Key.fromBytes(recoveryKeyBytes)
+            val recoveryContext = context(RECOVERY_WRAP_PURPOSE, vaultId)
+            wrappedRecoveryEnvelope = keyWrapping.wrap(
+                currentContentKey, recoveryKey, KeyProtection.RECOVERY, recoveryContext,
+            ).encode()
+            RecoveryWrapExistingKeyResult.Wrapped(wrappedRecoveryEnvelope.copyOf())
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (_: SecurityFailure.MissingKey) {
+            RecoveryWrapExistingKeyResult.NotReady
+        } catch (_: SecurityFailure.KeyInvalidated) {
+            RecoveryWrapExistingKeyResult.NotReady
+        } catch (_: Exception) {
+            RecoveryWrapExistingKeyResult.Failed
+        } finally {
+            metadataFile.bytes.fill(0)
+            existingWrapperBytes?.fill(0)
+            contentKey?.fill(0)
+            wrappedRecoveryEnvelope?.fill(0)
+        }
+    }
+
+    override suspend fun verifyPreparedRecoveryRecord(
+        vaultId: VaultId,
+        recoveryKeyBytes: ByteArray,
+        metadataBytes: ByteArray,
+        recoveryRecordBytes: ByteArray,
+    ): Boolean = recoveryMutex.withLock {
+        if (recoveryKeyBytes.size != Aes256Key.KEY_BYTES) return@withLock false
+        var contentKeyBytes: ByteArray? = null
+        var headerPlaintext: ByteArray? = null
+        try {
+            val metadata = (VaultMetadataCodec.decode(metadataBytes) as? VaultMetadataDecode.Supported)
+                ?.metadata ?: return@withLock false
+            if (metadata.vaultId != vaultId) return@withLock false
+            val record = (VaultRecoveryRecordCodec.decode(recoveryRecordBytes) as? VaultRecoveryRecordDecode.Supported)
+                ?.record ?: return@withLock false
+            if (record.vaultId != vaultId) return@withLock false
+            val envelopeBytes = record.wrappedContentKey
+            val envelope = try { WrappedKeyEnvelope.decode(envelopeBytes) }
+            finally { envelopeBytes.fill(0) }
+            if (envelope.protection != KeyProtection.RECOVERY) return@withLock false
+            val recoveryContext = context(RECOVERY_WRAP_PURPOSE, vaultId)
+            contentKeyBytes = keyWrapping.unwrap(
+                envelope, Aes256Key.fromBytes(recoveryKeyBytes), KeyProtection.RECOVERY, recoveryContext,
+            )
+            val contentKey = contentKeyBytes ?: return@withLock false
+            val encryptedHeaderBytes = metadata.encryptedHeader
+            try {
+                val encryptedHeader = EncryptedEnvelope.decode(encryptedHeaderBytes)
+                headerPlaintext = encryption.decrypt(
+                    encryptedHeader, Aes256Key.fromBytes(contentKey), headerContext(vaultId),
+                )
+            } finally { encryptedHeaderBytes.fill(0) }
+            when (val header = VaultHeaderCodec.decode(headerPlaintext ?: return@withLock false)) {
+                is VaultHeaderDecode.Supported -> header.vaultId == vaultId
+                is VaultHeaderDecode.UnsupportedVersion, VaultHeaderDecode.Invalid -> false
+            }
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (_: Exception) {
+            false
+        } finally {
+            contentKeyBytes?.fill(0)
+            headerPlaintext?.fill(0)
+        }
+    }
+
+    override suspend fun reconnectWithRecoveryKey(
+        vaultId: VaultId,
+        recoveryKeyBytes: ByteArray,
+        validateExistingRecords: suspend () -> ExistingVaultRecordsValidation,
+    ): RecoveryReconnectKeyResult = recoveryMutex.withLock {
+        if (recoveryKeyBytes.size != Aes256Key.KEY_BYTES) {
+            return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.INVALID_MATERIAL)
+        }
+        val snapshot = try { storage.inspect() }
+        catch (failure: CancellationException) { throw failure }
+        catch (_: SecurityException) { return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.ACCESS_DENIED) }
+        catch (_: Exception) { return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.LOCATION_UNAVAILABLE) }
+        val available = snapshot as? VaultStorageSnapshot.Available
+            ?: return@withLock RecoveryReconnectKeyResult.Failed(
+                if (snapshot == VaultStorageSnapshot.AccessDenied) RecoveryCryptographyFailure.ACCESS_DENIED
+                else RecoveryCryptographyFailure.LOCATION_UNAVAILABLE,
+            )
+        if (available.unexpectedEntries || available.unexpectedDataEntries ||
+            available.dataDirectory != com.ashishkumar.nivara.domain.vault.VaultDirectoryEntry.DIRECTORY
+        ) return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+        val metadataFile = available.metadata as? com.ashishkumar.nivara.domain.vault.VaultMetadataFile.Present
+            ?: return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.NOT_A_VAULT)
+        val recoveryFile = when (val file = available.recoveryRecord) {
+            is VaultRecoveryFile.Present -> file
+            VaultRecoveryFile.Missing -> return@withLock RecoveryReconnectKeyResult.Failed(
+                RecoveryCryptographyFailure.RECOVERY_NOT_CONFIGURED,
+            )
+            VaultRecoveryFile.AccessDenied -> return@withLock RecoveryReconnectKeyResult.Failed(
+                RecoveryCryptographyFailure.ACCESS_DENIED,
+            )
+            VaultRecoveryFile.Unavailable -> return@withLock RecoveryReconnectKeyResult.Failed(
+                RecoveryCryptographyFailure.LOCATION_UNAVAILABLE,
+            )
+            VaultRecoveryFile.Pending, VaultRecoveryFile.Unreadable, VaultRecoveryFile.WrongType ->
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+        }
+
+        var recoveredContentKey: ByteArray? = null
+        var headerPlaintext: ByteArray? = null
+        var newWrapperBytes: ByteArray? = null
+        var newLocalRecord: VaultKeyAccessRecord? = null
+        var previousLocalRecord: VaultKeyAccessRecord? = null
+        var temporaryInstalled = false
+        try {
+            val metadata = when (val result = VaultMetadataCodec.decode(metadataFile.bytes)) {
+                VaultMetadataDecode.Invalid -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+                is VaultMetadataDecode.UnsupportedVersion -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
+                is VaultMetadataDecode.Supported -> result.metadata
+            }
+            if (metadata.vaultId != vaultId) {
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.WRONG_VAULT)
+            }
+            val baseWrapped = metadata.wrappedContentKey
+            try {
+                val baseEnvelope = WrappedKeyEnvelope.decode(baseWrapped)
+                if (baseEnvelope.protection != KeyProtection.ANDROID_KEYSTORE) {
+                    return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+                }
+            } catch (_: SecurityFailure.UnsupportedEnvelopeVersion) {
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
+            } catch (_: Exception) {
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+            } finally { baseWrapped.fill(0) }
+
+            val recoveryRecord = when (val result = VaultRecoveryRecordCodec.decode(recoveryFile.bytes)) {
+                VaultRecoveryRecordDecode.Invalid -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+                is VaultRecoveryRecordDecode.UnsupportedVersion -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
+                is VaultRecoveryRecordDecode.Supported -> result.record
+            }
+            if (recoveryRecord.vaultId != vaultId) {
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.WRONG_VAULT)
+            }
+            val recoveryEnvelopeBytes = recoveryRecord.wrappedContentKey
+            val recoveryEnvelope = try { WrappedKeyEnvelope.decode(recoveryEnvelopeBytes) }
+            catch (_: SecurityFailure.UnsupportedEnvelopeVersion) {
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
+            } catch (_: Exception) {
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+            } finally { recoveryEnvelopeBytes.fill(0) }
+            if (recoveryEnvelope.protection != KeyProtection.RECOVERY) {
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+            }
+            val recoveryKey = Aes256Key.fromBytes(recoveryKeyBytes)
+            val recoveryContext = context(RECOVERY_WRAP_PURPOSE, vaultId)
+            try {
+                recoveredContentKey = keyWrapping.unwrap(
+                    recoveryEnvelope, recoveryKey, KeyProtection.RECOVERY, recoveryContext,
+                )
+            } catch (_: SecurityFailure.AuthenticationFailed) {
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.WRONG_VAULT)
+            }
+
+            val contentKeyBytes = recoveredContentKey
+                ?: return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+            val encryptedHeaderBytes = metadata.encryptedHeader
+            try {
+                val encryptedHeader = try { EncryptedEnvelope.decode(encryptedHeaderBytes) }
+                catch (_: SecurityFailure.UnsupportedEnvelopeVersion) {
+                    return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
+                } catch (_: Exception) {
+                    return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+                }
+                headerPlaintext = try {
+                    encryption.decrypt(encryptedHeader, Aes256Key.fromBytes(contentKeyBytes), headerContext(vaultId))
+                } catch (_: SecurityFailure.AuthenticationFailed) {
+                    return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.WRONG_VAULT)
+                }
+            } finally { encryptedHeaderBytes.fill(0) }
+            val authenticatedHeader = headerPlaintext
+                ?: return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+            when (val header = VaultHeaderCodec.decode(authenticatedHeader)) {
+                VaultHeaderDecode.Invalid -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.DAMAGED)
+                is VaultHeaderDecode.UnsupportedVersion -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
+                is VaultHeaderDecode.Supported -> if (header.vaultId != vaultId) {
+                    return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.WRONG_VAULT)
+                }
+            }
+
+            recoveryScopedKey = RecoveryScopedKey(vaultId, contentKeyBytes.copyOf())
+            val recordValidation = try { validateExistingRecords() }
+            finally {
+                recoveryScopedKey?.bytes?.fill(0)
+                recoveryScopedKey = null
+            }
+            when (recordValidation) {
+                ExistingVaultRecordsValidation.VALID -> Unit
+                ExistingVaultRecordsValidation.DAMAGED -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.RECORDS_DAMAGED)
+                ExistingVaultRecordsValidation.UNSUPPORTED -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
+                ExistingVaultRecordsValidation.ACCESS_DENIED -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.ACCESS_DENIED)
+                ExistingVaultRecordsValidation.UNAVAILABLE -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNAVAILABLE)
+            }
+
+            val store = keyAccessStore
+                ?: return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.PERSISTENCE_FAILED)
+            when (val old = store.load()) {
+                is VaultKeyAccessRead.Present -> previousLocalRecord = old.record
+                VaultKeyAccessRead.Missing, VaultKeyAccessRead.Invalid -> Unit
+                VaultKeyAccessRead.Unavailable -> return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.PERSISTENCE_FAILED)
+            }
+            val localWrappingKey = try { getOrCreateWrappingKey() }
+            catch (_: SecurityFailure.KeyInvalidated) {
+                try { deviceKeyStore.deleteKey(KEY_ALIAS); deviceKeyStore.createAes256Key(KEY_ALIAS) }
+                catch (_: Exception) { return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.PERSISTENCE_FAILED) }
+            } catch (_: SecurityFailure.MissingKey) {
+                try { deviceKeyStore.createAes256Key(KEY_ALIAS) }
+                catch (_: Exception) { return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.PERSISTENCE_FAILED) }
+            }
+            newWrapperBytes = try {
+                keyWrapping.wrap(
+                    contentKeyBytes, localWrappingKey, KeyProtection.ANDROID_KEYSTORE, keyContext(vaultId),
+                ).encode()
+            } catch (_: Exception) {
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.PERSISTENCE_FAILED)
+            }
+            val installedRecord = VaultKeyAccessRecord(vaultId, newWrapperBytes)
+            newLocalRecord = installedRecord
+            temporaryInstalled = true
+            if (!store.replace(installedRecord)) {
+                restoreLocalRecord(store, previousLocalRecord, installedRecord)
+                temporaryInstalled = false
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.PERSISTENCE_FAILED)
+            }
+            if (inspectMetadata(metadataFile.bytes) != VaultStatus.Ready(vaultId)) {
+                restoreLocalRecord(store, previousLocalRecord, installedRecord)
+                temporaryInstalled = false
+                return@withLock RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.PERSISTENCE_FAILED)
+            }
+            temporaryInstalled = false
+            RecoveryReconnectKeyResult.Reconnected
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (_: Exception) {
+            if (temporaryInstalled && newLocalRecord != null) {
+                keyAccessStore?.let { restoreLocalRecord(it, previousLocalRecord, newLocalRecord) }
+                temporaryInstalled = false
+            }
+            RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNAVAILABLE)
+        } finally {
+            if (temporaryInstalled && newLocalRecord != null) {
+                keyAccessStore?.let { restoreLocalRecord(it, previousLocalRecord, newLocalRecord) }
+            }
+            metadataFile.bytes.fill(0)
+            recoveryFile.bytes.fill(0)
+            recoveredContentKey?.fill(0)
+            headerPlaintext?.fill(0)
+            newWrapperBytes?.fill(0)
+        }
+    }
+
+    private suspend fun restoreLocalRecord(
+        store: VaultKeyAccessStore,
+        previous: VaultKeyAccessRecord?,
+        installed: VaultKeyAccessRecord,
+    ) = withContext(NonCancellable) {
+        try {
+            if (previous != null) store.replace(previous) else store.clearIfMatches(installed)
+        } catch (_: Exception) {
+            // A failed rollback is reported by the reconnect result; never delete external vault records.
+        }
+    }
+
+    private data class RecoveryScopedKey(val vaultId: VaultId, val bytes: ByteArray)
 
     private suspend fun inspectLocked(): VaultStatus {
         val snapshot = try {
@@ -175,15 +510,24 @@ class DefaultVaultRepository(
         }
     }
 
-    private fun inspectAvailable(snapshot: VaultStorageSnapshot.Available): VaultStatus {
+    private suspend fun inspectAvailable(snapshot: VaultStorageSnapshot.Available): VaultStatus {
+        if (snapshot.unexpectedEntries &&
+            snapshot.metadata is com.ashishkumar.nivara.domain.vault.VaultMetadataFile.Missing &&
+            snapshot.dataDirectory == com.ashishkumar.nivara.domain.vault.VaultDirectoryEntry.MISSING
+        ) return VaultStatus.NotAVault
         if (snapshot.unexpectedEntries || snapshot.unexpectedDataEntries) return VaultStatus.InvalidStructure
+        when (snapshot.recoveryRecord) {
+            VaultRecoveryFile.Pending, VaultRecoveryFile.WrongType, VaultRecoveryFile.Unreadable ->
+                return VaultStatus.CorruptMetadata
+            VaultRecoveryFile.AccessDenied -> return VaultStatus.AccessDenied
+            VaultRecoveryFile.Unavailable -> return VaultStatus.Unavailable(VaultUnavailableReason.EXTERNAL_STORAGE)
+            VaultRecoveryFile.Missing, is VaultRecoveryFile.Present -> Unit
+        }
         return when (val metadataFile = snapshot.metadata) {
             com.ashishkumar.nivara.domain.vault.VaultMetadataFile.Missing ->
-                if (snapshot.dataDirectory == com.ashishkumar.nivara.domain.vault.VaultDirectoryEntry.MISSING) {
-                    VaultStatus.NotInitialized
-                } else {
-                    VaultStatus.InvalidStructure
-                }
+                if (snapshot.dataDirectory == com.ashishkumar.nivara.domain.vault.VaultDirectoryEntry.MISSING &&
+                    snapshot.recoveryRecord is VaultRecoveryFile.Missing
+                ) VaultStatus.NotInitialized else VaultStatus.InvalidStructure
             com.ashishkumar.nivara.domain.vault.VaultMetadataFile.Unreadable -> VaultStatus.CorruptMetadata
             com.ashishkumar.nivara.domain.vault.VaultMetadataFile.AccessDenied -> VaultStatus.AccessDenied
             com.ashishkumar.nivara.domain.vault.VaultMetadataFile.Unavailable ->
@@ -195,7 +539,27 @@ class DefaultVaultRepository(
                     return VaultStatus.InvalidStructure
                 }
                 try {
-                    inspectMetadata(metadataFile.bytes)
+                    val decoded = when (val result = VaultMetadataCodec.decode(metadataFile.bytes)) {
+                        VaultMetadataDecode.Invalid -> return VaultStatus.CorruptMetadata
+                        is VaultMetadataDecode.UnsupportedVersion -> return VaultStatus.UnsupportedVersion(
+                            VaultFormatComponent.METADATA,
+                            result.version,
+                        )
+                        is VaultMetadataDecode.Supported -> result.metadata
+                    }
+                    val recoveryValidation = validateRecoverySlot(snapshot.recoveryRecord, decoded.vaultId)
+                    if (recoveryValidation != null) return recoveryValidation
+                    when (val status = inspectMetadata(metadataFile.bytes)) {
+                        is VaultStatus.Unavailable -> {
+                            if (status.reason == VaultUnavailableReason.DEVICE_KEY_MISSING ||
+                                status.reason == VaultUnavailableReason.DEVICE_KEY_INVALIDATED
+                            ) {
+                                val validRecovery = snapshot.recoveryRecord is VaultRecoveryFile.Present
+                                if (validRecovery) VaultStatus.RecoveryRequired(decoded.vaultId) else status
+                            } else status
+                        }
+                        else -> status
+                    }
                 } finally {
                     metadataFile.bytes.fill(0)
                 }
@@ -203,7 +567,36 @@ class DefaultVaultRepository(
         }
     }
 
-    private fun inspectMetadata(bytes: ByteArray): VaultStatus {
+    private fun validateRecoverySlot(file: VaultRecoveryFile, vaultId: VaultId): VaultStatus? {
+        if (file !is VaultRecoveryFile.Present) return null
+        val decoded = try { VaultRecoveryRecordCodec.decode(file.bytes) }
+        finally { file.bytes.fill(0) }
+        val record = when (decoded) {
+            VaultRecoveryRecordDecode.Invalid -> return VaultStatus.CorruptMetadata
+            is VaultRecoveryRecordDecode.UnsupportedVersion -> return VaultStatus.UnsupportedVersion(
+                VaultFormatComponent.RECOVERY,
+                decoded.version,
+            )
+            is VaultRecoveryRecordDecode.Supported -> decoded.record
+        }
+        if (record.vaultId != vaultId) return VaultStatus.CorruptMetadata
+        val envelopeBytes = record.wrappedContentKey
+        return try {
+            val envelope = try { WrappedKeyEnvelope.decode(envelopeBytes) }
+            catch (_: SecurityFailure.UnsupportedEnvelopeVersion) {
+                return VaultStatus.UnsupportedVersion(VaultFormatComponent.RECOVERY, null)
+            } catch (_: SecurityFailure.UnsupportedAlgorithm) {
+                return VaultStatus.UnsupportedVersion(VaultFormatComponent.RECOVERY, null)
+            } catch (_: SecurityFailure) {
+                return VaultStatus.CorruptMetadata
+            }
+            if (envelope.protection != KeyProtection.RECOVERY) VaultStatus.CorruptMetadata else null
+        } finally {
+            envelopeBytes.fill(0)
+        }
+    }
+
+    private suspend fun inspectMetadata(bytes: ByteArray): VaultStatus {
         val decoded = when (val result = VaultMetadataCodec.decode(bytes)) {
             VaultMetadataDecode.Invalid -> return VaultStatus.CorruptMetadata
             is VaultMetadataDecode.UnsupportedVersion -> return VaultStatus.UnsupportedVersion(
@@ -214,11 +607,18 @@ class DefaultVaultRepository(
         }
         val wrappedBytes = decoded.wrappedContentKey
         val headerEnvelopeBytes = decoded.encryptedHeader
+        var selectedWrappedBytes: ByteArray? = null
         var contentKey: ByteArray? = null
         var headerPlaintext: ByteArray? = null
         try {
+            val activeWrappedBytes = try { deviceWrappedKeyFor(decoded.vaultId, wrappedBytes) }
+            catch (_: StoredKeyAccessInvalid) { return VaultStatus.CorruptMetadata }
+            catch (_: StoredKeyAccessUnavailable) {
+                return VaultStatus.Unavailable(VaultUnavailableReason.CRYPTOGRAPHIC_SERVICE)
+            }
+            selectedWrappedBytes = activeWrappedBytes
             val wrapped = try {
-                WrappedKeyEnvelope.decode(wrappedBytes)
+                WrappedKeyEnvelope.decode(activeWrappedBytes)
             } catch (_: SecurityFailure.UnsupportedEnvelopeVersion) {
                 return VaultStatus.UnsupportedVersion(VaultFormatComponent.KEY_ENVELOPE, null)
             } catch (_: SecurityFailure.UnsupportedAlgorithm) {
@@ -300,6 +700,7 @@ class DefaultVaultRepository(
             }
         } finally {
             wrappedBytes.fill(0)
+            selectedWrappedBytes?.fill(0)
             headerEnvelopeBytes.fill(0)
             contentKey?.fill(0)
             headerPlaintext?.fill(0)
@@ -564,6 +965,40 @@ class DefaultVaultRepository(
             ?: return@contentLock VaultContentCryptoResult.VaultUnavailable(inspectAvailable(available))
         var rawKey: ByteArray? = null
         try {
+            val scopedKey = recoveryScopedKey
+            if (scopedKey?.vaultId == expectedVaultId) {
+                val key = Aes256Key.fromBytes(scopedKey.bytes)
+                return@contentLock try {
+                    operation(key)
+                } catch (_: StreamAuthorizationExpired) {
+                    VaultContentCryptoResult.AuthorizationExpired
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (_: SecurityFailure.AuthenticationFailed) {
+                    VaultContentCryptoResult.AuthenticationFailed
+                } catch (_: Exception) {
+                    VaultContentCryptoResult.OperationFailed
+                }
+            }
+            when (available.recoveryRecord) {
+                VaultRecoveryFile.Pending, VaultRecoveryFile.WrongType, VaultRecoveryFile.Unreadable ->
+                    return@contentLock VaultContentCryptoResult.VaultUnavailable(VaultStatus.CorruptMetadata)
+                VaultRecoveryFile.AccessDenied ->
+                    return@contentLock VaultContentCryptoResult.VaultUnavailable(VaultStatus.AccessDenied)
+                VaultRecoveryFile.Unavailable -> return@contentLock VaultContentCryptoResult.VaultUnavailable(
+                    VaultStatus.Unavailable(VaultUnavailableReason.EXTERNAL_STORAGE),
+                )
+                VaultRecoveryFile.Missing, is VaultRecoveryFile.Present -> Unit
+            }
+            when (val outer = VaultMetadataCodec.decode(metadataFile.bytes)) {
+                is VaultMetadataDecode.Supported -> {
+                    val slotFailure = validateRecoverySlot(available.recoveryRecord, outer.metadata.vaultId)
+                    if (slotFailure != null) {
+                        return@contentLock VaultContentCryptoResult.VaultUnavailable(slotFailure)
+                    }
+                }
+                else -> (available.recoveryRecord as? VaultRecoveryFile.Present)?.bytes?.fill(0)
+            }
             val status = inspectMetadata(metadataFile.bytes)
             if (status != VaultStatus.Ready(expectedVaultId)) {
                 return@contentLock VaultContentCryptoResult.VaultUnavailable(status)
@@ -572,7 +1007,14 @@ class DefaultVaultRepository(
                 is VaultMetadataDecode.Supported -> decoded.metadata
                 else -> return@contentLock VaultContentCryptoResult.VaultUnavailable(VaultStatus.CorruptMetadata)
             }
-            val wrapped = WrappedKeyEnvelope.decode(metadata.wrappedContentKey)
+            val metadataWrapped = metadata.wrappedContentKey
+            val activeWrapped = deviceWrappedKeyFor(expectedVaultId, metadataWrapped)
+            try { metadataWrapped.fill(0) } catch (_: Exception) { }
+            val wrapped = try { WrappedKeyEnvelope.decode(activeWrapped) }
+            finally { activeWrapped.fill(0) }
+            if (wrapped.protection != KeyProtection.ANDROID_KEYSTORE) {
+                return@contentLock VaultContentCryptoResult.VaultUnavailable(VaultStatus.CorruptMetadata)
+            }
             val deviceKey = deviceKeyStore.getAes256Key(KEY_ALIAS)
             val unwrapped = keyWrapping.unwrap(
                 wrapped,
@@ -613,7 +1055,7 @@ class DefaultVaultRepository(
         }
     }
 
-    private fun snapshotStatus(snapshot: VaultStorageSnapshot): VaultStatus = when (snapshot) {
+    private suspend fun snapshotStatus(snapshot: VaultStorageSnapshot): VaultStatus = when (snapshot) {
         VaultStorageSnapshot.RootNotSelected -> VaultStatus.RootNotSelected
         VaultStorageSnapshot.AccessDenied -> VaultStatus.AccessDenied
         VaultStorageSnapshot.Unavailable -> VaultStatus.Unavailable(VaultUnavailableReason.EXTERNAL_STORAGE)
@@ -667,6 +1109,29 @@ class DefaultVaultRepository(
         override fun write(bytes: ByteArray, offset: Int, length: Int) = Unit
     }
 
+    private suspend fun deviceWrappedKeyFor(vaultId: VaultId, metadataWrapper: ByteArray): ByteArray {
+        val store = keyAccessStore ?: return metadataWrapper.copyOf()
+        val read = try { store.load() }
+        catch (failure: CancellationException) { throw failure }
+        catch (_: Exception) { throw StoredKeyAccessUnavailable() }
+        return when (read) {
+            VaultKeyAccessRead.Missing -> metadataWrapper.copyOf()
+            VaultKeyAccessRead.Invalid -> throw StoredKeyAccessInvalid()
+            VaultKeyAccessRead.Unavailable -> throw StoredKeyAccessUnavailable()
+            is VaultKeyAccessRead.Present -> {
+                val record = read.record
+                val bytes = record.encodedWrapper
+                if (record.vaultId == vaultId) bytes else {
+                    bytes.fill(0)
+                    metadataWrapper.copyOf()
+                }
+            }
+        }
+    }
+
+    private class StoredKeyAccessInvalid : Exception()
+    private class StoredKeyAccessUnavailable : Exception()
+
     private fun getOrCreateWrappingKey(): Aes256Key = try {
         deviceKeyStore.createAes256Key(KEY_ALIAS)
     } catch (_: SecurityFailure.KeyAlreadyExists) {
@@ -689,6 +1154,7 @@ class DefaultVaultRepository(
     private companion object {
         const val KEY_ALIAS = "vault_content_wrap_v1"
         const val KEY_PURPOSE = "nivara.vault.content-key.wrap.v1"
+        const val RECOVERY_WRAP_PURPOSE = "nivara.vault.recovery.content-key.wrap.v1"
         const val HEADER_PURPOSE = "nivara.vault.header.v1"
         const val INDEX_PURPOSE = "nivara.vault.content-index.v1"
         const val ORGANIZATION_PURPOSE = "nivara.vault.organization-metadata.v1"

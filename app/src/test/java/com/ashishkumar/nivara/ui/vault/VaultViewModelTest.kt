@@ -13,6 +13,12 @@ import com.ashishkumar.nivara.domain.vault.VaultInitializationResult
 import com.ashishkumar.nivara.domain.vault.VaultRepository
 import com.ashishkumar.nivara.domain.vault.VaultRootSelectionResult
 import com.ashishkumar.nivara.domain.vault.VaultStatus
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryRepository
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryResult
+import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupCommitResult
+import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupId
+import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupPreview
+import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupResult
 import com.ashishkumar.nivara.domain.vault.content.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -116,8 +122,136 @@ class VaultViewModelTest {
         store.clear()
     }
 
-    private fun newViewModel(repository: FakeVaultRepository, session: FakeSessionManager) =
-        VaultViewModel(repository, MissingIndexRepository(), NoopImportRepository(), session)
+    @Test
+    fun recoverySetupRequiresTheExistingSessionAndClearsTheOneTimeCodeAfterCommit() = runTest(dispatcher) {
+        val repository = FakeVaultRepository().apply {
+            status = VaultStatus.Ready(VaultId("00112233445566778899aabbccddeeff"))
+        }
+        val session = FakeSessionManager().apply { state.value = authenticatedSession() }
+        val recovery = FakeRecoveryRepository()
+        val store = ViewModelStore()
+        val viewModel = newViewModel(repository, session, recovery).also { store.put("vault", it) }
+
+        viewModel.refresh()
+        advanceUntilIdle()
+        viewModel.prepareRecoverySetup()
+        advanceUntilIdle()
+        assertEquals(1, recovery.prepareCalls)
+        assertEquals("NVR1-ONE-TIME", viewModel.state.value.recoverySetupPreview?.recoveryCode)
+
+        viewModel.confirmRecoverySetup()
+        advanceUntilIdle()
+        assertEquals(1, recovery.commitCalls)
+        assertEquals(null, viewModel.state.value.recoverySetupPreview)
+        assertTrue(viewModel.state.value.recoveryMessage.orEmpty().contains("Recovery is enabled"))
+        assertEquals(0, session.primaryAuthCalls)
+        assertEquals(0, session.biometricAuthCalls)
+        store.clear()
+    }
+
+    @Test
+    fun cancellingRecoverySetupClearsItsOneTimeCodeAndPendingTransaction() = runTest(dispatcher) {
+        val repository = FakeVaultRepository().apply {
+            status = VaultStatus.Ready(VaultId("00112233445566778899aabbccddeeff"))
+        }
+        val session = FakeSessionManager().apply { state.value = authenticatedSession() }
+        val recovery = FakeRecoveryRepository()
+        val store = ViewModelStore()
+        val viewModel = newViewModel(repository, session, recovery).also { store.put("vault", it) }
+        viewModel.refresh()
+        advanceUntilIdle()
+        viewModel.prepareRecoverySetup()
+        advanceUntilIdle()
+        val setupId = viewModel.state.value.recoverySetupPreview!!.setupId
+
+        viewModel.cancelRecoverySetup(setupId)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.state.value.recoverySetupPreview)
+        assertEquals(1, recovery.cancelCalls)
+        store.clear()
+    }
+
+    @Test
+    fun recoveryDoesNotRunOrPersistWhenTheExistingSessionHasExpired() = runTest(dispatcher) {
+        val repository = FakeVaultRepository().apply {
+            status = VaultStatus.RecoveryRequired(VaultId("00112233445566778899aabbccddeeff"))
+        }
+        val session = FakeSessionManager().apply { state.value = authenticatedSession() }
+        val recovery = FakeRecoveryRepository()
+        val store = ViewModelStore()
+        val viewModel = newViewModel(repository, session, recovery).also { store.put("vault", it) }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        session.state.value = SessionState.Unauthenticated
+        viewModel.recover("NVR1-USER-INPUT")
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.authenticationRequired)
+        assertEquals(0, recovery.recoverCalls)
+        assertEquals(0, repository.initializeCalls)
+        assertEquals(0, session.primaryAuthCalls)
+        assertEquals(0, session.biometricAuthCalls)
+        store.clear()
+    }
+
+    @Test
+    fun failedRecoveryKeepsTheVaultInRecoveryRequiredInsteadOfShowingAnEmptyVault() = runTest(dispatcher) {
+        val vaultId = VaultId("00112233445566778899aabbccddeeff")
+        val repository = FakeVaultRepository().apply { status = VaultStatus.RecoveryRequired(vaultId) }
+        val session = FakeSessionManager().apply { state.value = authenticatedSession() }
+        val recovery = FakeRecoveryRepository().apply {
+            result = VaultRecoveryResult.Failed(com.ashishkumar.nivara.domain.vault.VaultRecoveryFailure.WRONG_VAULT)
+        }
+        val store = ViewModelStore()
+        val viewModel = newViewModel(repository, session, recovery).also { store.put("vault", it) }
+
+        viewModel.refresh()
+        advanceUntilIdle()
+        viewModel.recover("NVR1-WRONG-VAULT")
+        advanceUntilIdle()
+
+        assertEquals(VaultStatus.RecoveryRequired(vaultId), viewModel.state.value.status)
+        assertTrue(viewModel.state.value.recoveryMessage.orEmpty().contains("does not authenticate"))
+        assertEquals(1, recovery.recoverCalls)
+        assertEquals(0, repository.initializeCalls)
+        assertEquals(0, session.primaryAuthCalls)
+        assertEquals(0, session.biometricAuthCalls)
+        store.clear()
+    }
+
+    @Test
+    fun authenticatedRecoveryReconnectsWithoutCreatingAnotherSession() = runTest(dispatcher) {
+        val vaultId = VaultId("00112233445566778899aabbccddeeff")
+        val repository = FakeVaultRepository().apply { status = VaultStatus.RecoveryRequired(vaultId) }
+        val session = FakeSessionManager().apply { state.value = authenticatedSession() }
+        val recovery = FakeRecoveryRepository().apply {
+            onRecover = { repository.status = VaultStatus.Ready(vaultId) }
+        }
+        val store = ViewModelStore()
+        val viewModel = newViewModel(repository, session, recovery).also { store.put("vault", it) }
+
+        viewModel.refresh()
+        advanceUntilIdle()
+        viewModel.recover("NVR1-USER-INPUT")
+        advanceUntilIdle()
+
+        assertEquals(VaultStatus.Ready(vaultId), viewModel.state.value.status)
+        assertEquals(1, recovery.recoverCalls)
+        assertEquals(0, repository.initializeCalls)
+        assertEquals(0, session.primaryAuthCalls)
+        assertEquals(0, session.biometricAuthCalls)
+        store.clear()
+    }
+
+    private fun newViewModel(
+        repository: FakeVaultRepository,
+        session: FakeSessionManager,
+        recovery: VaultRecoveryRepository? = null,
+    ) = VaultViewModel(
+        repository, MissingIndexRepository(), NoopImportRepository(), session, recoveryRepository = recovery,
+    )
 
     private fun authenticatedSession() = SessionState.Authenticated(
         AuthenticatedSession(AuthenticationSource.PRIMARY, 0, Long.MAX_VALUE),
@@ -153,6 +287,32 @@ class VaultViewModelTest {
             sourceId: VaultSourceSelectionId, vaultId: VaultId,
             authorizationCheckpoint: suspend () -> Boolean, onProgress: (Long, Long?) -> Unit,
         ) = VaultImportResult.Failed
+    }
+
+    private class FakeRecoveryRepository : VaultRecoveryRepository {
+        var prepareCalls = 0
+        var commitCalls = 0
+        var cancelCalls = 0
+        var recoverCalls = 0
+        var onRecover: () -> Unit = {}
+        var result: VaultRecoveryResult = VaultRecoveryResult.Reconnected(VaultId("00112233445566778899aabbccddeeff"))
+        private val setupId = VaultRecoverySetupId("0123456789abcdef0123456789abcdef")
+
+        override suspend fun prepareSetup(vaultId: VaultId): VaultRecoverySetupResult {
+            prepareCalls++
+            return VaultRecoverySetupResult.Prepared(VaultRecoverySetupPreview(setupId, "NVR1-ONE-TIME"))
+        }
+        override suspend fun confirmSetup(setupId: VaultRecoverySetupId): VaultRecoverySetupCommitResult {
+            commitCalls++
+            return VaultRecoverySetupCommitResult.Committed
+        }
+        override suspend fun cancelSetup(setupId: VaultRecoverySetupId) { cancelCalls++ }
+        override suspend fun recover(recoveryCode: CharArray): VaultRecoveryResult {
+            recoverCalls++
+            recoveryCode.fill('\u0000')
+            onRecover()
+            return result
+        }
     }
 
     private class FakeSessionManager : SessionManager {

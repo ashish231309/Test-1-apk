@@ -9,6 +9,13 @@ import com.ashishkumar.nivara.domain.vault.VaultInitializationResult
 import com.ashishkumar.nivara.domain.vault.VaultRepository
 import com.ashishkumar.nivara.domain.vault.VaultRootSelectionResult
 import com.ashishkumar.nivara.domain.vault.VaultStatus
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryFailure
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryRepository
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryResult
+import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupCommitResult
+import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupId
+import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupPreview
+import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupResult
 import com.ashishkumar.nivara.domain.vault.content.VaultImportRepository
 import com.ashishkumar.nivara.domain.vault.content.VaultImportResult
 import com.ashishkumar.nivara.domain.vault.content.VaultIndexInitializationResult
@@ -67,6 +74,9 @@ data class VaultUiState(
     val progressTotalBytes: Long? = null,
     val authenticationRequired: Boolean = false,
     val message: String? = null,
+    val recoveryBusy: Boolean = false,
+    val recoverySetupPreview: VaultRecoverySetupPreview? = null,
+    val recoveryMessage: String? = null,
 ) {
     /** Null only before an index state has been inspected; failures are never mapped to no matches. */
     val searchState: VaultSearchState? get() = indexState?.let { VaultItemSearch.search(it, searchQuery) }
@@ -96,6 +106,7 @@ class VaultViewModel(
     private val importRepository: VaultImportRepository,
     private val sessionManager: SessionManager,
     private val organizationRepository: VaultOrganizationRepository? = null,
+    private val recoveryRepository: VaultRecoveryRepository? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(VaultUiState())
     val state: StateFlow<VaultUiState> = mutableState.asStateFlow()
@@ -113,8 +124,12 @@ class VaultViewModel(
                 trashSearchQuery = previous.trashSearchQuery,
                 trashSort = previous.trashSort,
                 message = message,
+                recoveryBusy = previous.recoveryBusy,
+                recoverySetupPreview = previous.recoverySetupPreview,
+                recoveryMessage = previous.recoveryMessage,
             )
             if (!hasValidSession()) {
+                previous.recoverySetupPreview?.let { recoveryRepository?.cancelSetup(it.setupId) }
                 mutableState.value = VaultUiState(checking = false, authenticationRequired = true)
                 return@launch
             }
@@ -130,6 +145,8 @@ class VaultViewModel(
                     trashSearchQuery = previous.trashSearchQuery,
                     trashSort = previous.trashSort,
                     message = message,
+                    recoverySetupPreview = previous.recoverySetupPreview.takeIf { status is VaultStatus.Ready },
+                    recoveryMessage = previous.recoveryMessage,
                 )
                 if (status is VaultStatus.Ready) {
                     val indexState = indexRepository.inspect(status.vaultId)
@@ -186,6 +203,154 @@ class VaultViewModel(
                 ))
             }
         }
+    }
+
+    fun prepareRecoverySetup() {
+        val vaultId = (mutableState.value.status as? VaultStatus.Ready)?.vaultId ?: return
+        val repository = recoveryRepository ?: return setRecoveryMessage("Recovery is unavailable in this build.")
+        if (mutableState.value.recoveryBusy) return
+        viewModelScope.launch {
+            if (!hasValidSession()) {
+                clearRecoveryState()
+                mutableState.value = VaultUiState(checking = false, authenticationRequired = true)
+                return@launch
+            }
+            mutableState.value = mutableState.value.copy(recoveryBusy = true, recoveryMessage = null)
+            try {
+                when (val result = repository.prepareSetup(vaultId)) {
+                    is VaultRecoverySetupResult.Prepared -> {
+                        if (!hasValidSession()) {
+                            repository.cancelSetup(result.preview.setupId)
+                            clearRecoveryState()
+                            mutableState.value = VaultUiState(checking = false, authenticationRequired = true)
+                        } else {
+                            mutableState.value = mutableState.value.copy(
+                                recoveryBusy = false,
+                                recoverySetupPreview = result.preview,
+                                recoveryMessage = null,
+                            )
+                        }
+                    }
+                    VaultRecoverySetupResult.AlreadyConfigured -> setRecoveryMessage("Recovery is already configured. Rotation is not supported.")
+                    VaultRecoverySetupResult.VaultUnavailable -> setRecoveryMessage("The selected vault location is unavailable.")
+                    VaultRecoverySetupResult.VaultNotReady -> setRecoveryMessage("The existing vault could not be authenticated. Nothing was changed.")
+                    VaultRecoverySetupResult.Failed -> setRecoveryMessage("Recovery setup could not be prepared. Nothing was changed.")
+                }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (_: Exception) {
+                setRecoveryMessage("Recovery setup could not be prepared. Nothing was changed.")
+            }
+        }
+    }
+
+    fun confirmRecoverySetup() {
+        val preview = mutableState.value.recoverySetupPreview ?: return
+        val repository = recoveryRepository ?: return
+        if (mutableState.value.recoveryBusy) return
+        viewModelScope.launch {
+            if (!hasValidSession()) {
+                repository.cancelSetup(preview.setupId)
+                clearRecoveryState()
+                mutableState.value = VaultUiState(checking = false, authenticationRequired = true)
+                return@launch
+            }
+            mutableState.value = mutableState.value.copy(recoveryBusy = true, recoveryMessage = null)
+            try {
+                when (repository.confirmSetup(preview.setupId)) {
+                    VaultRecoverySetupCommitResult.Committed -> {
+                        mutableState.value = mutableState.value.copy(
+                            recoveryBusy = false,
+                            recoverySetupPreview = null,
+                            recoveryMessage = "Recovery is enabled for this vault. Store the code somewhere private and separate from this device.",
+                        )
+                        refresh()
+                    }
+                    VaultRecoverySetupCommitResult.Expired -> setRecoveryMessage("Recovery setup expired. Start again.")
+                    VaultRecoverySetupCommitResult.AlreadyConfigured -> setRecoveryMessage("Recovery is already configured. Rotation is not supported.")
+                    VaultRecoverySetupCommitResult.VaultUnavailable -> setRecoveryMessage("The selected vault location is unavailable. Nothing was replaced.")
+                    VaultRecoverySetupCommitResult.VerificationFailed -> setRecoveryMessage("The recovery record could not be verified. No repair was attempted.")
+                    VaultRecoverySetupCommitResult.Failed -> setRecoveryMessage("Recovery could not be committed. The existing vault records were not changed.")
+                }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (_: Exception) {
+                setRecoveryMessage("Recovery could not be committed. The existing vault records were not changed.")
+            }
+        }
+    }
+
+    fun cancelRecoverySetup() {
+        val preview = mutableState.value.recoverySetupPreview
+        mutableState.value = mutableState.value.copy(
+            recoveryBusy = false,
+            recoverySetupPreview = null,
+            recoveryMessage = null,
+        )
+        if (preview != null) viewModelScope.launch { recoveryRepository?.cancelSetup(preview.setupId) }
+    }
+
+    fun cancelRecoverySetup(setupId: VaultRecoverySetupId) {
+        if (mutableState.value.recoverySetupPreview?.setupId == setupId) cancelRecoverySetup()
+    }
+
+    fun recover(code: String) {
+        if (mutableState.value.status !is VaultStatus.RecoveryRequired || mutableState.value.recoveryBusy) return
+        val repository = recoveryRepository ?: return setRecoveryMessage("Recovery is unavailable in this build.")
+        viewModelScope.launch {
+            val codeChars = code.toCharArray()
+            try {
+                if (!hasValidSession()) {
+                    mutableState.value = VaultUiState(checking = false, authenticationRequired = true)
+                    return@launch
+                }
+                mutableState.value = mutableState.value.copy(recoveryBusy = true, recoveryMessage = null)
+                when (val result = repository.recover(codeChars)) {
+                    is VaultRecoveryResult.Reconnected -> {
+                        mutableState.value = mutableState.value.copy(recoveryBusy = false, recoveryMessage = null)
+                        refresh()
+                    }
+                    is VaultRecoveryResult.Failed -> setRecoveryMessage(recoveryFailureMessage(result.reason))
+                }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (_: Exception) {
+                setRecoveryMessage("Recovery could not be completed. No vault records were repaired or replaced.")
+            } finally {
+                codeChars.fill('\u0000')
+            }
+        }
+    }
+
+    private fun setRecoveryMessage(message: String) {
+        mutableState.value = mutableState.value.copy(
+            recoveryBusy = false,
+            recoverySetupPreview = null,
+            recoveryMessage = message,
+        )
+    }
+
+    private fun clearRecoveryState() {
+        mutableState.value = mutableState.value.copy(
+            recoveryBusy = false,
+            recoverySetupPreview = null,
+            recoveryMessage = null,
+        )
+    }
+
+    private fun recoveryFailureMessage(reason: VaultRecoveryFailure): String = when (reason) {
+        VaultRecoveryFailure.INVALID_MATERIAL -> "The recovery code is invalid or incomplete. Check it and try again."
+        VaultRecoveryFailure.LOCATION_UNAVAILABLE -> "The selected vault location is unavailable. Re-select the original SAF folder and try again."
+        VaultRecoveryFailure.ACCESS_DENIED -> "The selected vault folder is not accessible. Re-select the original SAF folder."
+        VaultRecoveryFailure.NOT_A_VAULT -> "This folder is not an initialized Nivara vault. Nothing was changed."
+        VaultRecoveryFailure.WRONG_VAULT -> "This recovery code does not authenticate the selected vault. Nothing was changed."
+        VaultRecoveryFailure.IDENTITY_UNKNOWN -> "The vault identity could not be verified. Nothing was changed."
+        VaultRecoveryFailure.RECOVERY_NOT_CONFIGURED -> "This vault has no recovery record. Recovery was not configured before access was lost."
+        VaultRecoveryFailure.VAULT_DAMAGED -> "Vault metadata is damaged or unsupported. Nothing was repaired or changed."
+        VaultRecoveryFailure.VAULT_UNSUPPORTED -> "This vault uses a recovery or record version this app cannot read. Nothing was changed."
+        VaultRecoveryFailure.RECORDS_DAMAGED -> "Existing authenticated vault records could not be verified. Nothing was changed."
+        VaultRecoveryFailure.KEY_ACCESS_PERSISTENCE -> "The vault key could not be safely reconnected on this installation. Nothing was changed."
+        VaultRecoveryFailure.UNAVAILABLE -> "Recovery could not be completed. Nothing was changed."
     }
 
     fun initializeIndex() {
@@ -555,11 +720,14 @@ class VaultViewModel(
         private val importRepository: VaultImportRepository,
         private val sessionManager: SessionManager,
         private val organizationRepository: VaultOrganizationRepository? = null,
+        private val recoveryRepository: VaultRecoveryRepository? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(VaultViewModel::class.java))
-            return VaultViewModel(repository, indexRepository, importRepository, sessionManager, organizationRepository) as T
+            return VaultViewModel(
+                repository, indexRepository, importRepository, sessionManager, organizationRepository, recoveryRepository,
+            ) as T
         }
     }
 }

@@ -52,6 +52,8 @@ import com.ashishkumar.nivara.domain.security.session.SessionManager
 import com.ashishkumar.nivara.domain.security.session.SessionState
 import com.ashishkumar.nivara.domain.vault.VaultFormatComponent
 import com.ashishkumar.nivara.domain.vault.VaultRepository
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryCodeCodec
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryRepository
 import com.ashishkumar.nivara.domain.vault.VaultRootSelectionResult
 import com.ashishkumar.nivara.domain.vault.VaultStatus
 import com.ashishkumar.nivara.domain.vault.content.VaultImportRepository
@@ -85,6 +87,7 @@ import kotlinx.coroutines.ensureActive
 @Composable
 fun VaultScreen(
     repository: VaultRepository,
+    recoveryRepository: VaultRecoveryRepository? = null,
     indexRepository: VaultIndexRepository,
     organizationRepository: VaultOrganizationRepository,
     importRepository: VaultImportRepository,
@@ -101,7 +104,9 @@ fun VaultScreen(
 ) {
     SecureScreenEffect()
     val viewModel: VaultViewModel = viewModel(
-        factory = VaultViewModel.Factory(repository, indexRepository, importRepository, sessionManager, organizationRepository),
+        factory = VaultViewModel.Factory(
+            repository, indexRepository, importRepository, sessionManager, organizationRepository, recoveryRepository,
+        ),
     )
     val uiState by viewModel.state.collectAsStateWithLifecycle()
     val sessionState by sessionManager.sessionState.collectAsStateWithLifecycle()
@@ -124,6 +129,20 @@ fun VaultScreen(
         sourceSelectionResult?.let {
             viewModel.onSourceSelectionResult(it)
             onConsumeSourceSelectionResult()
+        }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val recoverySetupId = uiState.recoverySetupPreview?.setupId
+    DisposableEffect(lifecycleOwner, recoverySetupId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && recoverySetupId != null) {
+                viewModel.cancelRecoverySetup(recoverySetupId)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            recoverySetupId?.let(viewModel::cancelRecoverySetup)
         }
     }
 
@@ -703,16 +722,41 @@ private fun VaultStatusContent(
                 is VaultIndexRead.VaultUnavailable -> Text("The vault key or metadata is unavailable.",
                     color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp))
             }
+            VaultRecoverySetupContent(state, viewModel)
             OutlinedButton(modifier = Modifier.padding(top = 12.dp), onClick = onRefresh) { Text("Inspect again") }
             OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = onConfigureRoot) { Text("Configure or reconnect folder") }
         }
         is VaultStatus.Unavailable -> {
-            Text("Selected external storage is unavailable (${status.reason}). No alternate location was selected.", color = MaterialTheme.colorScheme.error)
-            OutlinedButton(modifier = Modifier.padding(top = 12.dp), onClick = onConfigureRoot) { Text("Reconnect the same folder") }
+            val message = when (status.reason) {
+                com.ashishkumar.nivara.domain.vault.VaultUnavailableReason.EXTERNAL_STORAGE ->
+                    "Selected external storage is unavailable. No alternate location was selected."
+                com.ashishkumar.nivara.domain.vault.VaultUnavailableReason.DEVICE_KEY_MISSING ->
+                    "This installation's local vault key is missing, and this vault has no usable recovery record. Recovery was not configured before access was lost."
+                com.ashishkumar.nivara.domain.vault.VaultUnavailableReason.DEVICE_KEY_INVALIDATED ->
+                    "This installation's local vault key was invalidated, and this vault has no usable recovery record. Recovery was not configured before access was lost."
+                com.ashishkumar.nivara.domain.vault.VaultUnavailableReason.CRYPTOGRAPHIC_SERVICE ->
+                    "The local cryptographic service is unavailable. No vault records were changed."
+            }
+            Text(message, color = MaterialTheme.colorScheme.error)
+            OutlinedButton(modifier = Modifier.padding(top = 12.dp), onClick = onConfigureRoot) { Text("Re-select the same folder") }
         }
         VaultStatus.AccessDenied -> {
             Text("Android access to the selected folder is missing or revoked. The vault was not treated as empty.", color = MaterialTheme.colorScheme.error)
             OutlinedButton(modifier = Modifier.padding(top = 12.dp), onClick = onConfigureRoot) { Text("Reconnect the same folder") }
+        }
+        is VaultStatus.RecoveryRequired -> {
+            Text(
+                "This existing vault needs its recovery code before it can be reconnected. Recovery verifies the existing vault and content key; it does not recover your primary PIN, password, pattern, biometrics, or app session.",
+                color = MaterialTheme.colorScheme.error,
+            )
+            RecoveryCodeEntry(state, viewModel)
+            OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = onConfigureRoot) {
+                Text("Re-select the original SAF folder")
+            }
+        }
+        VaultStatus.NotAVault -> {
+            Text("The selected folder is not an initialized Nivara vault. It will not be initialized or modified.", color = MaterialTheme.colorScheme.error)
+            OutlinedButton(modifier = Modifier.padding(top = 12.dp), onClick = onConfigureRoot) { Text("Choose or re-select a folder") }
         }
         VaultStatus.CorruptMetadata -> {
             Text("Vault metadata is unreadable, malformed, or failed authentication. It was not replaced.", color = MaterialTheme.colorScheme.error)
@@ -897,4 +941,5 @@ private fun VaultFormatComponent.displayName(): String = when (this) {
     VaultFormatComponent.METADATA -> "metadata"
     VaultFormatComponent.KEY_ENVELOPE -> "key envelope"
     VaultFormatComponent.ENCRYPTED_HEADER -> "encrypted header"
+    VaultFormatComponent.RECOVERY -> "recovery envelope"
 }

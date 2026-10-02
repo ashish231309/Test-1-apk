@@ -53,6 +53,7 @@ class MainActivity : FragmentActivity() {
                     usageAccessRepository = container.usageAccessRepository,
                     overlayCapabilityRepository = container.overlayCapabilityRepository,
                     vaultRepository = container.vaultRepository,
+                    vaultRecoveryRepository = container.vaultRecoveryRepository,
                     vaultIndexRepository = container.vaultIndexRepository,
                     vaultOrganizationRepository = container.vaultOrganizationRepository,
                     vaultImportRepository = container.vaultImportRepository,

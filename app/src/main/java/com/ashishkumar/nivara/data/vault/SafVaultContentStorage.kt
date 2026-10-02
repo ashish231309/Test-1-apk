@@ -602,11 +602,16 @@ class SafVaultContentStorage internal constructor(
 
     private fun structure(tree: Uri): Structure? {
         val root = listChildren(tree, null, MAX_ROOT_ENTRIES)
-        if (root.any { it.name != METADATA_NAME && it.name != DATA_DIRECTORY }) return null
+        if (root.any {
+                it.name != METADATA_NAME && it.name != DATA_DIRECTORY && it.name != RECOVERY_RECORD_NAME
+            } || root.any { it.name == TEMPORARY_RECOVERY_RECORD_NAME }
+        ) return null
         val metadata = root.filter { it.name == METADATA_NAME }
         val data = root.filter { it.name == DATA_DIRECTORY }
+        val recovery = root.filter { it.name == RECOVERY_RECORD_NAME }
         if (metadata.size != 1 || metadata.single().mimeType == Document.MIME_TYPE_DIR || data.size != 1 ||
-            data.single().mimeType != Document.MIME_TYPE_DIR
+            data.single().mimeType != Document.MIME_TYPE_DIR || recovery.size > 1 ||
+            recovery.any { it.mimeType == Document.MIME_TYPE_DIR }
         ) return null
         val dataEntries = listChildren(tree, data.single().uri, MAX_ROOT_ENTRIES)
         if (dataEntries.any { it.name !in CONTENT_DIRECTORIES || it.mimeType != Document.MIME_TYPE_DIR } ||
@@ -831,6 +836,8 @@ class SafVaultContentStorage internal constructor(
 
     private companion object {
         const val METADATA_NAME = "vault.nvmeta"
+        const val RECOVERY_RECORD_NAME = "vault.nvrec"
+        const val TEMPORARY_RECOVERY_RECORD_NAME = "vault.nvrec.pending"
         const val DATA_DIRECTORY = "data"
         const val INDEX_DIRECTORY = "index"
         const val OBJECTS_DIRECTORY = "objects"

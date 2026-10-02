@@ -34,6 +34,8 @@ import com.ashishkumar.nivara.data.security.JcaCredentialKeyDeriver
 import com.ashishkumar.nivara.data.security.JcaSecureRandomSource
 import com.ashishkumar.nivara.data.vault.AndroidVaultLocationStore
 import com.ashishkumar.nivara.data.vault.DefaultVaultRepository
+import com.ashishkumar.nivara.data.vault.DefaultVaultRecoveryRepository
+import com.ashishkumar.nivara.data.vault.AndroidVaultKeyAccessStore
 import com.ashishkumar.nivara.data.vault.SafVaultStorage
 import com.ashishkumar.nivara.data.vault.SafVaultContentStorage
 import com.ashishkumar.nivara.data.vault.DefaultVaultIndexRepository
@@ -45,6 +47,8 @@ import com.ashishkumar.nivara.data.vault.AndroidVaultSourceDocumentProvider
 import com.ashishkumar.nivara.data.vault.PendingSourceDocuments
 import com.ashishkumar.nivara.data.vault.VaultRootSelectionHandler
 import com.ashishkumar.nivara.domain.vault.VaultRepository
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryRepository
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryCryptography
 import com.ashishkumar.nivara.domain.vault.content.VaultContentCrypto
 import com.ashishkumar.nivara.domain.vault.content.VaultContentStorage
 import com.ashishkumar.nivara.domain.vault.content.VaultIndexRepository
@@ -83,6 +87,7 @@ interface NivaraContainer {
     val applicationIconProvider: AndroidApplicationIconProvider
     val hiddenApplicationRepository: HiddenApplicationRepository
     val vaultRepository: VaultRepository
+    val vaultRecoveryRepository: VaultRecoveryRepository
     val vaultIndexRepository: VaultIndexRepository
     val vaultOrganizationRepository: VaultOrganizationRepository
     val vaultImportRepository: VaultImportRepository
@@ -120,12 +125,23 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
         VaultRootSelectionHandler(applicationContext, vaultLocationStore)
     }
     private val safVaultStorage by lazy { SafVaultStorage(applicationContext, vaultLocationStore) }
+    private val vaultKeyAccessStore by lazy { AndroidVaultKeyAccessStore(applicationContext) }
     override val vaultRepository: VaultRepository by lazy {
         DefaultVaultRepository(
             storage = safVaultStorage,
             encryption = encryption,
             keyWrapping = keyWrapping,
             deviceKeyStore = deviceKeyStore,
+            random = secureRandom,
+            keyAccessStore = vaultKeyAccessStore,
+        )
+    }
+    override val vaultRecoveryRepository: VaultRecoveryRepository by lazy {
+        DefaultVaultRecoveryRepository(
+            storage = safVaultStorage,
+            cryptography = vaultRepository as VaultRecoveryCryptography,
+            indexRepository = vaultIndexRepository,
+            organizationRepository = vaultOrganizationRepository,
             random = secureRandom,
         )
     }

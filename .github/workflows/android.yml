@@ -29,13 +29,7 @@ jobs:
       - name: Verify architecture and negative fixtures
         run: |
           python3 tools/verify_nivara.py
-          python3 -m unittest \
-            tools/test_verify_hidden_architecture.py \
-            tools/test_verify_launcher_architecture.py \
-            tools/test_verify_camouflage_architecture.py \
-            tools/test_verify_vault_architecture.py \
-            tools/test_verify_vault_organization.py \
-            tools/test_verify_vault_trash.py
+          python3 -m unittest discover -s tools -p 'test_*.py'
       - name: Run JVM tests and build debug, Android-test, and release APKs; lint
         shell: bash
         run: |

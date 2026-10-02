@@ -27,6 +27,10 @@ sealed interface VaultStatus {
     data class Unavailable(val reason: VaultUnavailableReason) : VaultStatus
     data object AccessDenied : VaultStatus
     data object CorruptMetadata : VaultStatus
+    /** A structurally recognized recovery slot exists, but this installation cannot unwrap its local wrapper. */
+    data class RecoveryRequired(val vaultId: VaultId) : VaultStatus
+    /** The chosen location is not an initialized Nivara vault; it must never be initialized implicitly. */
+    data object NotAVault : VaultStatus
     data class UnsupportedVersion(val component: VaultFormatComponent, val version: Int?) : VaultStatus
     data object InvalidStructure : VaultStatus
     data class InitializationFailed(val reason: VaultInitializationFailure) : VaultStatus
@@ -39,7 +43,7 @@ enum class VaultUnavailableReason {
     CRYPTOGRAPHIC_SERVICE,
 }
 
-enum class VaultFormatComponent { METADATA, KEY_ENVELOPE, ENCRYPTED_HEADER }
+enum class VaultFormatComponent { METADATA, KEY_ENVELOPE, ENCRYPTED_HEADER, RECOVERY }
 
 enum class VaultInitializationFailure {
     CRYPTOGRAPHIC_OPERATION,
@@ -95,6 +99,7 @@ sealed interface VaultStorageSnapshot {
         val dataDirectory: VaultDirectoryEntry,
         val unexpectedEntries: Boolean,
         val unexpectedDataEntries: Boolean = false,
+        val recoveryRecord: VaultRecoveryFile = VaultRecoveryFile.Missing,
     ) : VaultStorageSnapshot
 }
 
@@ -109,6 +114,17 @@ sealed interface VaultStorageCommitResult {
     data object VerificationFailed : VaultStorageCommitResult
     data object Failed : VaultStorageCommitResult
     data object CleanupFailed : VaultStorageCommitResult
+    data object RecoveryRecordExists : VaultStorageCommitResult
+}
+
+sealed interface VaultRecoveryFile {
+    data object Missing : VaultRecoveryFile
+    data class Present(val bytes: ByteArray) : VaultRecoveryFile
+    data object Pending : VaultRecoveryFile
+    data object Unreadable : VaultRecoveryFile
+    data object AccessDenied : VaultRecoveryFile
+    data object Unavailable : VaultRecoveryFile
+    data object WrongType : VaultRecoveryFile
 }
 
 /** Platform storage port. It exposes bytes and typed outcomes, never Android storage handles. */
@@ -117,6 +133,12 @@ interface VaultStorage {
 
     /** Creates the reserved data directory and commits metadata through a temporary sibling + rename. */
     suspend fun initializeAtomically(metadataBytes: ByteArray): VaultStorageCommitResult
+
+    /** Adds a recovery wrapper to an already initialized vault without changing its key or base metadata. */
+    suspend fun commitRecoveryRecordAtomically(
+        expectedVaultId: VaultId,
+        recordBytes: ByteArray,
+    ): VaultStorageCommitResult = VaultStorageCommitResult.Failed
 }
 
 interface VaultRepository {

@@ -43,6 +43,8 @@ class VaultVerifierTest(unittest.TestCase):
             "docs/vault/README.md",
             "docs/vault/stage14.md",
             "docs/vault/stage15.md",
+            "docs/vault/stage18.md",
+            "docs/vault/stage18-architecture-audit.md",
             "app/src/test/java/com/ashishkumar/nivara/domain/vault/content/VaultContentClassifierTest.kt",
             "app/src/test/java/com/ashishkumar/nivara/ui/vault/VaultItemViewerViewModelTest.kt",
             "app/src/test/java/com/ashishkumar/nivara/data/vault/DefaultVaultRepositoryTest.kt",
@@ -60,6 +62,7 @@ class VaultVerifierTest(unittest.TestCase):
     def test_valid_vault_boundaries_pass(self) -> None:
         verify_nivara.verify_vault_manifest(self.manifest)
         verify_nivara.verify_vault_architecture(self.root, self.manifest)
+        verify_nivara.verify_vault_recovery_architecture(self.root)
         verify_nivara.verify_vault_content_architecture(self.root)
         verify_nivara.verify_vault_presentation_architecture(self.root)
 
@@ -539,6 +542,7 @@ class VaultVerifierTest(unittest.TestCase):
     def _assert_architecture_rejected(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             verify_nivara.verify_vault_architecture(self.root, self.manifest)
+            verify_nivara.verify_vault_recovery_architecture(self.root)
             verify_nivara.verify_vault_content_architecture(self.root)
 
     def _mutate_all_and_reject(self, relative: str, old: str, new: str) -> None:

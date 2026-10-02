@@ -27,6 +27,7 @@ import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
 import com.ashishkumar.nivara.domain.applock.OverlayCapabilityRepository
 import com.ashishkumar.nivara.domain.security.session.SessionManager
 import com.ashishkumar.nivara.domain.vault.VaultRepository
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryRepository
 import com.ashishkumar.nivara.domain.vault.VaultRootSelectionResult
 import com.ashishkumar.nivara.domain.vault.content.VaultImportRepository
 import com.ashishkumar.nivara.domain.vault.content.VaultIndexRepository
@@ -56,6 +57,7 @@ fun NivaraApp(
     usageAccessRepository: UsageAccessRepository,
     overlayCapabilityRepository: OverlayCapabilityRepository,
     vaultRepository: VaultRepository,
+    vaultRecoveryRepository: VaultRecoveryRepository,
     vaultIndexRepository: VaultIndexRepository,
     vaultOrganizationRepository: VaultOrganizationRepository,
     vaultImportRepository: VaultImportRepository,
@@ -131,6 +133,7 @@ fun NivaraApp(
         composable(AppDestination.Vault.route) {
             VaultScreen(
                 repository = vaultRepository,
+                recoveryRepository = vaultRecoveryRepository,
                 indexRepository = vaultIndexRepository,
                 organizationRepository = vaultOrganizationRepository,
                 importRepository = vaultImportRepository,
