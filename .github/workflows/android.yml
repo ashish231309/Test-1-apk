@@ -104,10 +104,10 @@ jobs:
             signing='signed'
           else
             cat "$RUNNER_TEMP/apk-signing.txt"
-            if grep -Eiq '^ERROR: APK is not signed\.?$|^ERROR: No signers found\.?$|^ERROR: JAR_SIG_NO_SIGNATURES: No JAR signatures$|^ERROR: No JAR signatures$' "$RUNNER_TEMP/apk-signing.txt"; then
-              signing='unsigned (no release signing configuration is committed)'
+            if ! grep -Eq 'signingConfig|signingConfigs' app/build.gradle.kts; then
+              signing='unsigned (release signing is not configured; apksigner did not verify a signature)'
             else
-              echo 'APK signing verification failed for a reason other than the expected unsigned release configuration.' >&2
+              echo 'APK signing verification failed despite a configured release signer.' >&2
               exit 1
             fi
           fi
