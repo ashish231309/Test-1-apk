@@ -24,6 +24,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ashishkumar.nivara.domain.security.session.SessionManager
 import com.ashishkumar.nivara.domain.security.session.SessionState
 import com.ashishkumar.nivara.domain.vault.VaultRootSelectionResult
+import com.ashishkumar.nivara.ui.components.NivaraPageHeader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -53,11 +54,9 @@ fun VaultRootConfigurationScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("External vault folder", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
-                text = "Choose a shared folder explicitly, or pick the exact previously selected folder to reconnect it. A different folder will not replace the current vault location.",
-                style = MaterialTheme.typography.bodyMedium,
+            NivaraPageHeader(
+                title = "External vault folder",
+                supportingText = "Choose a shared folder explicitly, or pick the exact previously selected folder to reconnect it. A different folder will not replace the current vault location.",
             )
             selectionResult?.let { result ->
                 Text(selectionMessage(result), modifier = Modifier.padding(bottom = 12.dp))

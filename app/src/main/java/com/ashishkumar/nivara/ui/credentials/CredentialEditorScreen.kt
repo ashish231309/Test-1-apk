@@ -47,6 +47,7 @@ import com.ashishkumar.nivara.domain.credentials.PatternCanonicalizer
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialService
 import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
 import com.ashishkumar.nivara.domain.security.session.SessionManager
+import com.ashishkumar.nivara.ui.components.NivaraPageHeader
 import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -265,7 +266,7 @@ internal fun CredentialEditorScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(title, style = MaterialTheme.typography.headlineSmall)
+            NivaraPageHeader(title = title)
             if (success) {
                 Text(message.orEmpty(), color = MaterialTheme.colorScheme.primary)
                 Button(onClick = onDone) { Text(stringResource(R.string.done)) }

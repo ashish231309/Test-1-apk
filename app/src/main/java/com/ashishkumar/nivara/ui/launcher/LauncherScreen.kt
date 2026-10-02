@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +42,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ashishkumar.nivara.data.app.AndroidApplicationIconProvider
 import com.ashishkumar.nivara.domain.app.InstalledApplication
 import com.ashishkumar.nivara.domain.security.session.SessionState
+import com.ashishkumar.nivara.ui.components.NivaraPageHeader
+import com.ashishkumar.nivara.ui.components.NivaraSpacing
 import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 
 @Composable
@@ -104,15 +108,14 @@ private fun LauncherHome(
     onRetry: () -> Unit,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(contentPadding).padding(horizontal = 24.dp, vertical = 32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxSize().padding(contentPadding).verticalScroll(rememberScrollState())
+            .padding(horizontal = NivaraSpacing.large, vertical = NivaraSpacing.xLarge),
+        verticalArrangement = Arrangement.spacedBy(NivaraSpacing.small),
+        horizontalAlignment = Alignment.Start,
     ) {
-        Text("Home", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
-        Text(
-            modifier = Modifier.padding(top = 8.dp, bottom = 28.dp),
-            text = "Your home for the applications you choose to show here.",
-            style = MaterialTheme.typography.bodyLarge,
+        NivaraPageHeader(
+            title = "Home",
+            supportingText = "Your home for the applications you choose to show here.",
         )
         Button(modifier = Modifier.fillMaxWidth(), onClick = onOpenDrawer) {
             Text("Open app drawer")

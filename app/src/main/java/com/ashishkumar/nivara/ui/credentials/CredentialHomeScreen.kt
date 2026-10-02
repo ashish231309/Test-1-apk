@@ -2,7 +2,9 @@ package com.ashishkumar.nivara.ui.credentials
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -23,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ashishkumar.nivara.R
 import com.ashishkumar.nivara.domain.biometrics.BiometricAuthenticationResult
@@ -37,6 +38,11 @@ import com.ashishkumar.nivara.domain.credentials.PrimaryCredentialType
 import com.ashishkumar.nivara.domain.security.session.AuthenticationSource
 import com.ashishkumar.nivara.domain.security.session.SessionManager
 import com.ashishkumar.nivara.domain.security.session.SessionState
+import com.ashishkumar.nivara.ui.components.NivaraPageHeader
+import com.ashishkumar.nivara.ui.components.NivaraSectionHeader
+import com.ashishkumar.nivara.ui.components.NivaraSpacing
+import com.ashishkumar.nivara.ui.components.NivaraStatusCard
+import com.ashishkumar.nivara.ui.components.NivaraStatusTone
 import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -74,39 +80,60 @@ fun CredentialHomeScreen(
         if (sessionState == SessionState.Unauthenticated) biometricResult = null
     }
 
-    Scaffold { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(NivaraSpacing.large),
+            horizontalAlignment = Alignment.Start,
         ) {
-            Text("Nivara", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
-            Text(
-                modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
-                text = stringResource(R.string.home_welcome),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.bodyLarge,
+            NivaraPageHeader(
+                title = "Nivara",
+                supportingText = stringResource(R.string.home_welcome),
             )
             when (val current = status) {
-                null -> CircularProgressIndicator()
-                CredentialServiceStatus.NotConfigured -> Button(onClick = onEnroll) {
-                    Text(stringResource(R.string.credential_setup))
+                null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator()
+                    Text("Checking local security settings…", style = MaterialTheme.typography.bodyMedium)
+                }
+                CredentialServiceStatus.NotConfigured -> {
+                    NivaraStatusCard(
+                        title = "Set up your primary credential",
+                        message = "Choose a PIN, password, or pattern to protect Nivara's authenticated actions.",
+                        tone = NivaraStatusTone.CAUTION,
+                    )
+                    Button(modifier = Modifier.fillMaxWidth(), onClick = onEnroll) {
+                        Text(stringResource(R.string.credential_setup))
+                    }
                 }
                 is CredentialServiceStatus.Configured -> {
-                    Text(stringResource(R.string.credential_configured, current.type.displayName()))
-                    Button(modifier = Modifier.padding(top = 12.dp), onClick = { onVerify(current.type) }) {
+                    NivaraStatusCard(
+                        title = "Primary credential ready",
+                        message = stringResource(R.string.credential_configured, current.type.displayName()),
+                        tone = NivaraStatusTone.SUCCESS,
+                    )
+                    Button(modifier = Modifier.fillMaxWidth(), onClick = { onVerify(current.type) }) {
                         Text(stringResource(R.string.credential_verify))
                     }
-                    OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = { onChange(current.type) }) {
+                    OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = { onChange(current.type) }) {
                         Text(stringResource(R.string.credential_change))
                     }
                     SessionControls(
                         state = sessionState,
                         onLockNow = { scope.launch { sessionManager.lockNow() } },
                     )
-                    sessionNotice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    sessionNotice?.let {
+                        NivaraStatusCard("Authentication notice", it, NivaraStatusTone.ERROR)
+                    }
+                    NivaraSectionHeader(
+                        title = "Biometric authentication",
+                        supportingText = "Optional and always secondary to your primary credential.",
+                    )
                     if (biometricStatus == null) {
-                        CircularProgressIndicator(modifier = Modifier.padding(top = 16.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            CircularProgressIndicator()
+                            Text("Checking biometric availability…", style = MaterialTheme.typography.bodyMedium)
+                        }
                     } else {
                         BiometricControls(
                             status = biometricStatus!!,
@@ -144,19 +171,23 @@ fun CredentialHomeScreen(
                         )
                     }
                 }
-                CredentialServiceStatus.InvalidConfiguration -> Text(
-                    stringResource(R.string.credential_configuration_unavailable),
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
+                CredentialServiceStatus.InvalidConfiguration -> NivaraStatusCard(
+                    title = "Credential settings unavailable",
+                    message = stringResource(R.string.credential_configuration_unavailable),
+                    tone = NivaraStatusTone.ERROR,
                 )
             }
-            OutlinedButton(modifier = Modifier.padding(top = 16.dp), onClick = onPrepareAppLock) {
+            NivaraSectionHeader(
+                title = "Privacy tools",
+                supportingText = "Manage existing protections and your encrypted vault.",
+            )
+            OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = onPrepareAppLock) {
                 Text("Prepare App Lock")
             }
-            OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = onManageHiddenApplications) {
+            OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = onManageHiddenApplications) {
                 Text("Manage hidden applications")
             }
-            OutlinedButton(modifier = Modifier.padding(top = 8.dp), onClick = onManageVault) {
+            OutlinedButton(modifier = Modifier.fillMaxWidth(), onClick = onManageVault) {
                 Text("External encrypted vault")
             }
         }

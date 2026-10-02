@@ -57,7 +57,7 @@ Recovery validates the authenticated vault header and the existing index/organiz
 - Wrong code/foreign vault, damaged or unsupported records, invalid content inventory, unavailable SAF, denied permission, and local persistence failure remain distinct generic UI outcomes. UI never shows raw identity bytes, URI/path, provider exception, or crypto internals.
 - Recovery does not modify primary credential DataStore, biometric enrollment/attempts, `SessionManager`, or SAF grants. New installations require local primary credential enrollment/authentication and explicit tree selection.
 - Missing or revoked SAF access is not repaired by recovery. No alternate root is selected.
-- No recovery rotation, permanent delete, cloud/backup/sync, vault-content share/export, re-encryption, automatic migration, plaintext cache, index/org reconstruction, or Stage 19 UI polish is implemented.
+- No recovery rotation, permanent delete, cloud/backup/sync, vault-content share/export, re-encryption, automatic migration, plaintext cache, or index/org reconstruction is implemented. Stage 19 presentation refinements are separate and do not change these recovery or storage boundaries.
 
 ## Verification status
 

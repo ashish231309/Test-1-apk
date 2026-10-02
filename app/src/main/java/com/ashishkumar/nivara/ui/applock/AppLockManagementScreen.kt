@@ -57,6 +57,8 @@ import com.ashishkumar.nivara.domain.permissions.UsageAccessRepository
 import com.ashishkumar.nivara.domain.permissions.UsageAccessStatus
 import com.ashishkumar.nivara.domain.security.session.SessionManager
 import com.ashishkumar.nivara.domain.security.session.SessionState
+import com.ashishkumar.nivara.ui.components.NivaraPageHeader
+import com.ashishkumar.nivara.ui.components.NivaraSpacing
 import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 
 @Composable
@@ -109,17 +111,16 @@ fun AppLockManagementScreen(
     Scaffold { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = NivaraSpacing.large, vertical = NivaraSpacing.regular),
+            verticalArrangement = Arrangement.spacedBy(NivaraSpacing.medium),
         ) {
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("App Lock", style = MaterialTheme.typography.headlineSmall)
-                    Text(
-                        "Choose which launchable apps Nivara should protect. This list changes the same protected set used by App Lock detection.",
-                        style = MaterialTheme.typography.bodyMedium,
+                Column(verticalArrangement = Arrangement.spacedBy(NivaraSpacing.medium)) {
+                    NivaraPageHeader(
+                        title = "App Lock",
+                        supportingText = "Choose which launchable apps Nivara should protect. This list changes the same protected set used by App Lock detection.",
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(NivaraSpacing.small)) {
                         OutlinedButton(onClick = onBack) { Text("Back") }
                         OutlinedButton(onClick = onOpenSetup) { Text("Permissions and setup") }
                     }

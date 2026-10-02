@@ -51,6 +51,8 @@ import com.ashishkumar.nivara.domain.applock.ProtectedApplicationRepository
 import com.ashishkumar.nivara.domain.apphide.HiddenApplicationRepository
 import com.ashishkumar.nivara.domain.security.session.SessionManager
 import com.ashishkumar.nivara.domain.security.session.SessionState
+import com.ashishkumar.nivara.ui.components.NivaraPageHeader
+import com.ashishkumar.nivara.ui.components.NivaraSpacing
 import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 
 @Composable
@@ -84,15 +86,14 @@ fun HiddenApplicationManagementScreen(
     Scaffold { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = NivaraSpacing.large, vertical = NivaraSpacing.regular),
+            verticalArrangement = Arrangement.spacedBy(NivaraSpacing.medium),
         ) {
             item(key = "heading") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Hidden applications", style = MaterialTheme.typography.headlineSmall)
-                    Text(
-                        "Manage which apps Nivara's planned launcher will omit. This stores a Nivara preference only; it does not hide apps from Android or other launchers.",
-                        style = MaterialTheme.typography.bodyMedium,
+                Column(verticalArrangement = Arrangement.spacedBy(NivaraSpacing.medium)) {
+                    NivaraPageHeader(
+                        title = "Hidden applications",
+                        supportingText = "Manage which apps Nivara's planned launcher will omit. This stores a Nivara preference only; it does not hide apps from Android or other launchers.",
                     )
                     OutlinedButton(onClick = onBack) { Text("Back") }
                 }

@@ -8,16 +8,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ashishkumar.nivara.R
+import com.ashishkumar.nivara.ui.components.NivaraPageHeader
+import com.ashishkumar.nivara.ui.components.NivaraStatusCard
+import com.ashishkumar.nivara.ui.components.NivaraStatusTone
 
 /** Minimal home state model, ready to be connected to a real data source in a later stage. */
 sealed interface HomeUiState {
@@ -50,21 +51,18 @@ private fun HomeContent(contentPadding: PaddingValues) {
         modifier = Modifier
             .fillMaxSize()
             .padding(contentPadding)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(horizontal = 24.dp, vertical = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+        horizontalAlignment = Alignment.Start,
     ) {
-        Text(
-            text = stringResource(R.string.app_name),
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.primary,
+        NivaraPageHeader(
+            title = stringResource(R.string.app_name),
+            supportingText = stringResource(R.string.home_welcome),
         )
-        Text(
-            modifier = Modifier.padding(top = 12.dp),
-            text = stringResource(R.string.home_welcome),
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        NivaraStatusCard(
+            title = "Your privacy workspace",
+            message = "Review your security settings and existing privacy tools from Nivara Home.",
+            tone = NivaraStatusTone.INFORMATION,
         )
     }
 }
@@ -92,15 +90,14 @@ private fun ErrorContent(
             .fillMaxSize()
             .padding(contentPadding)
             .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.Start,
     ) {
-        Text(message, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
-        Button(
-            modifier = Modifier.padding(top = 16.dp),
-            onClick = onRetry,
-        ) {
-            Text(stringResource(R.string.retry))
-        }
+        NivaraStatusCard(
+            title = "Could not load this screen",
+            message = message,
+            tone = NivaraStatusTone.ERROR,
+        )
+        Button(onClick = onRetry) { Text(stringResource(R.string.retry)) }
     }
 }

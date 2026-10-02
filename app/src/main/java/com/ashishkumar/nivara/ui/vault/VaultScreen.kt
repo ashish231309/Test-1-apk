@@ -79,6 +79,8 @@ import com.ashishkumar.nivara.domain.vault.content.VaultItem
 import com.ashishkumar.nivara.domain.vault.content.VaultItemId
 import com.ashishkumar.nivara.domain.vault.content.VaultItemOpenState
 import com.ashishkumar.nivara.domain.vault.content.VaultSourceSelectionResult
+import com.ashishkumar.nivara.ui.components.NivaraPageHeader
+import com.ashishkumar.nivara.ui.components.NivaraSpacing
 import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -148,15 +150,13 @@ fun VaultScreen(
 
     Scaffold { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(NivaraSpacing.large),
             verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("External encrypted vault", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
-                text = "Import documents through Android's picker. Nivara stores encrypted objects and an authenticated index in the selected vault.",
-                style = MaterialTheme.typography.bodyMedium,
+            NivaraPageHeader(
+                title = "External encrypted vault",
+                supportingText = "Import documents through Android's picker. Nivara stores encrypted objects and an authenticated index in the selected vault.",
             )
             when {
                 uiState.checking -> CircularProgressIndicator()

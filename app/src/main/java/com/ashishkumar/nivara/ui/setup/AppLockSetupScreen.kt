@@ -29,6 +29,7 @@ import com.ashishkumar.nivara.domain.permissions.UsageAccessStatus
 import com.ashishkumar.nivara.domain.applock.OverlayCapabilityRepository
 import com.ashishkumar.nivara.domain.applock.OverlayCapabilityStatus
 import com.ashishkumar.nivara.domain.applock.OverlaySettingsResult
+import com.ashishkumar.nivara.ui.components.NivaraPageHeader
 import com.ashishkumar.nivara.ui.security.SecureScreenEffect
 
 @Composable
@@ -62,7 +63,10 @@ fun AppLockSetupScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("App Lock preparation", style = MaterialTheme.typography.headlineSmall)
+            NivaraPageHeader(
+                title = "App Lock preparation",
+                supportingText = "Review required Android capabilities and manage the apps covered by your existing App Lock configuration.",
+            )
             OutlinedButton(onClick = onBack) { Text("Back") }
             Text(
                 "Usage Access lets Nivara detect protected apps. Overlay access lets it display the App Lock surface. " +
