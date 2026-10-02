@@ -122,6 +122,7 @@ jobs:
             echo "- SHA-256: $checksum"
             echo "- Signing: $signing"
           } | tee release-apk-audit.txt >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Release APK metadata::$(basename "$apk"); versionName=0.1.0; versionCode=1; size=${size} bytes; SHA-256=${checksum}; signing=${signing}"
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
