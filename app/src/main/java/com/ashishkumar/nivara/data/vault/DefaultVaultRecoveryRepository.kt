@@ -2,6 +2,7 @@ package com.ashishkumar.nivara.data.vault
 
 import com.ashishkumar.nivara.domain.security.Aes256Key
 import com.ashishkumar.nivara.domain.security.SecureRandomSource
+import com.ashishkumar.nivara.domain.security.TimeProvider
 import com.ashishkumar.nivara.domain.vault.ExistingVaultRecordsValidation
 import com.ashishkumar.nivara.domain.vault.RecoveryCryptographyFailure
 import com.ashishkumar.nivara.domain.vault.RecoveryReconnectKeyResult
@@ -22,6 +23,7 @@ import com.ashishkumar.nivara.domain.vault.VaultRecoveryResult
 import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupCommitResult
 import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupId
 import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupPreview
+import com.ashishkumar.nivara.domain.vault.VaultRecoveryThrottle
 import com.ashishkumar.nivara.domain.vault.VaultRecoverySetupResult
 import com.ashishkumar.nivara.domain.vault.VaultStorage
 import com.ashishkumar.nivara.domain.vault.VaultStorageCommitResult
@@ -42,8 +44,11 @@ class DefaultVaultRecoveryRepository(
     private val indexRepository: VaultIndexRepository,
     private val organizationRepository: VaultOrganizationRepository,
     private val random: SecureRandomSource,
+    timeProvider: TimeProvider,
 ) : VaultRecoveryRepository {
     private val mutex = Mutex()
+    private val recoveryAttemptMutex = Mutex()
+    private val recoveryThrottle = VaultRecoveryThrottle(timeProvider)
     private var pendingSetup: PendingSetup? = null
 
     override suspend fun prepareSetup(vaultId: VaultId): VaultRecoverySetupResult = mutex.withLock {
@@ -129,48 +134,62 @@ class DefaultVaultRecoveryRepository(
         if (pendingSetup?.id == setupId) clearPending()
     }
 
-    override suspend fun recover(recoveryCode: CharArray): VaultRecoveryResult {
+    override suspend fun recover(recoveryCode: CharArray): VaultRecoveryResult = recoveryAttemptMutex.withLock {
         var decodedKey: ByteArray? = null
         var validDecode: VaultRecoveryCodeCodec.Decode.Valid? = null
         try {
+            if (recoveryThrottle.retryAfterMillis() > 0L) {
+                return@withLock VaultRecoveryResult.Failed(VaultRecoveryFailure.THROTTLED)
+            }
             val decoded = VaultRecoveryCodeCodec.decode(CharBuffer.wrap(recoveryCode))
             if (decoded !is VaultRecoveryCodeCodec.Decode.Valid) {
-                return VaultRecoveryResult.Failed(VaultRecoveryFailure.INVALID_MATERIAL)
+                return@withLock VaultRecoveryResult.Failed(VaultRecoveryFailure.INVALID_MATERIAL)
             }
             validDecode = decoded
             decodedKey = decoded.keyBytes()
             val snapshot = try { storage.inspect() }
             catch (failure: CancellationException) { throw failure }
-            catch (_: SecurityException) { return VaultRecoveryResult.Failed(VaultRecoveryFailure.ACCESS_DENIED) }
-            catch (_: Exception) { return VaultRecoveryResult.Failed(VaultRecoveryFailure.LOCATION_UNAVAILABLE) }
+            catch (_: SecurityException) {
+                return@withLock VaultRecoveryResult.Failed(VaultRecoveryFailure.ACCESS_DENIED)
+            }
+            catch (_: Exception) {
+                return@withLock VaultRecoveryResult.Failed(VaultRecoveryFailure.LOCATION_UNAVAILABLE)
+            }
             val available = snapshot as? VaultStorageSnapshot.Available
-                ?: return VaultRecoveryResult.Failed(
+                ?: return@withLock VaultRecoveryResult.Failed(
                     if (snapshot == VaultStorageSnapshot.AccessDenied) VaultRecoveryFailure.ACCESS_DENIED
                     else VaultRecoveryFailure.LOCATION_UNAVAILABLE,
                 )
             if (available.unexpectedEntries || available.unexpectedDataEntries) {
-                return VaultRecoveryResult.Failed(VaultRecoveryFailure.VAULT_DAMAGED)
+                return@withLock VaultRecoveryResult.Failed(VaultRecoveryFailure.VAULT_DAMAGED)
             }
             val metadataFile = available.metadata as? VaultMetadataFile.Present
-                ?: return VaultRecoveryResult.Failed(VaultRecoveryFailure.NOT_A_VAULT)
+                ?: return@withLock VaultRecoveryResult.Failed(VaultRecoveryFailure.NOT_A_VAULT)
             val vaultId = try {
                 when (val decodedMetadata = VaultMetadataCodec.decode(metadataFile.bytes)) {
-                    VaultMetadataDecode.Invalid -> return VaultRecoveryResult.Failed(VaultRecoveryFailure.VAULT_DAMAGED)
-                    is VaultMetadataDecode.UnsupportedVersion -> return VaultRecoveryResult.Failed(VaultRecoveryFailure.VAULT_UNSUPPORTED)
+                    VaultMetadataDecode.Invalid -> return@withLock VaultRecoveryResult.Failed(VaultRecoveryFailure.VAULT_DAMAGED)
+                    is VaultMetadataDecode.UnsupportedVersion -> return@withLock VaultRecoveryResult.Failed(VaultRecoveryFailure.VAULT_UNSUPPORTED)
                     is VaultMetadataDecode.Supported -> decodedMetadata.metadata.vaultId
                 }
             } finally { metadataFile.bytes.fill(0) }
 
-            return when (val result = cryptography.reconnectWithRecoveryKey(vaultId, decodedKey) {
+            val result = when (val reconnect = cryptography.reconnectWithRecoveryKey(vaultId, decodedKey) {
                 validateExistingRecords(vaultId)
             }) {
                 RecoveryReconnectKeyResult.Reconnected -> VaultRecoveryResult.Reconnected(vaultId)
-                is RecoveryReconnectKeyResult.Failed -> VaultRecoveryResult.Failed(result.reason.toPublicFailure())
+                is RecoveryReconnectKeyResult.Failed -> VaultRecoveryResult.Failed(reconnect.reason.toPublicFailure())
             }
+            when (result) {
+                is VaultRecoveryResult.Reconnected -> recoveryThrottle.reset()
+                is VaultRecoveryResult.Failed -> if (result.reason == VaultRecoveryFailure.WRONG_VAULT) {
+                    recoveryThrottle.recordAuthenticationFailure()
+                }
+            }
+            result
         } catch (failure: CancellationException) {
             throw failure
         } catch (_: Exception) {
-            return VaultRecoveryResult.Failed(VaultRecoveryFailure.UNAVAILABLE)
+            VaultRecoveryResult.Failed(VaultRecoveryFailure.UNAVAILABLE)
         } finally {
             recoveryCode.fill('\u0000')
             decodedKey?.fill(0)

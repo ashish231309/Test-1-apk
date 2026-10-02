@@ -350,8 +350,8 @@ def verify_camouflage_architecture(root: Path) -> None:
         require(required in docs,
                 f"camouflage recovery/security documentation must cover {required!r}")
     readme = source(root / "README.md").lower()
-    for required in ("ordinary recovery entry", "not invisibility", "docs/camouflage/readme.md"):
-        require(required in readme, f"README must document Stage 12 {required!r}")
+    for required in ("ordinary recovery entry", "not concealment from android", "docs/camouflage/readme.md"):
+        require(required in readme, f"README must document the ordinary launcher recovery route and its limitation ({required!r})")
 
 
 def verify_vault_manifest(manifest: ET.Element) -> None:
@@ -555,11 +555,11 @@ def verify_vault_architecture(root: Path, manifest: ET.Element) -> None:
     for required in ("storage access framework", "api 28", "scoped storage", "vault.nvmeta", "data/",
                      "android keystore", "keywrappingservice", "authenticatedencryption", "not initialized",
                      "access denied", "unavailable", "corrupt", "unsupported", "atomic", "no fallback",
-                     "stage 14", "stage 18", "reinstall", "permission", "no plaintext credentials",
+                     "recovery", "after reinstall", "permission", "no plaintext credentials",
                      "root-configuration destination"):
         require(required in docs, f"vault documentation must cover {required!r}")
     readme = source(root / "README.md").lower()
-    for required in ("external encrypted vault", "docs/vault/readme.md", "stage 14", "file import"):
+    for required in ("external encrypted vault", "docs/vault/readme.md", "file import"):
         require(required in readme, f"README must describe current vault scope ({required!r})")
     require("\n".join(path.read_text(encoding="utf-8") for path in ui_files).strip(),
             "vault UI foundation must contain an explicit state consumer")
@@ -582,6 +582,7 @@ def verify_vault_recovery_architecture(root: Path) -> None:
     recovery_ui = source(ui / "VaultRecoveryContent.kt")
     screen = source(ui / "VaultScreen.kt")
     container = source(package / "di/NivaraContainer.kt")
+    throttle = source(domain / "VaultRecoveryThrottle.kt")
     readme = source(root / "README.md").lower()
     vault_docs = source(root / "docs/vault/README.md").lower()
     stage18_docs = source(root / "docs/vault/stage18.md").lower()
@@ -678,12 +679,20 @@ def verify_vault_recovery_architecture(root: Path) -> None:
             "AndroidVaultKeyAccessStore(applicationContext)" in container and
             "DefaultVaultRecoveryRepository(" in container,
             "one shared recovery repository and ciphertext-only reconnect store must be wired through the existing container")
-    require("256-bit" in stage18_docs and "no separate guessing throttle" in stage18_docs and
+    require("recoveryAttemptMutex.withLock" in repo and "recoveryThrottle.retryAfterMillis()" in repo and
+            "recoveryThrottle.recordAuthenticationFailure()" in repo and "VaultRecoveryFailure.THROTTLED" in repo and
+            "recoveryThrottle.reset()" in repo and "timeProvider = credentialClock" in container,
+            "failed recovery-envelope authentication must be serialized, throttled, and reset on success")
+    require("nowElapsedRealtimeMillis()" in throttle and "MAX_DELAY_MILLIS = 30_000L" in throttle and
+            "MAX_TRACKED_FAILURES = 16" in throttle and "process-memory-only" in throttle.lower(),
+            "recovery retry delay must use monotonic time and have bounded process-only state")
+    require("256-bit" in stage18_docs and "30 seconds" in stage18_docs and
+            "process-memory-only exponential retry delay" in stage18_docs and
             "rotation is not supported" in stage18_docs and "no canonical application-level recovery envelope" in audit,
-            "Stage 18 documentation must explain entropy/throttling, no rotation, and the Stage 2 audit finding")
-    require("stage18-architecture-audit.md" in vault_docs and "reinstall" in readme and
-            "stage 18" in readme,
-            "root and vault docs must link the recovery architecture and state the reconnect/reinstall boundary")
+            "recovery docs must explain entropy, bounded throttling, no rotation, and the Stage 2 audit finding")
+    require("recovery" in vault_docs and "after reinstall" in readme and
+            "newly enrolled local credential" in readme,
+            "product and vault docs must state the reconnect/reinstall boundary")
     require(not re.search(r"\b(?:emptyTrash|emptyTrash|permanentDelete|reEncrypt|migrateVault|exportVault|backupVault|syncVault)\b", repo + "\n" + crypto),
             "recovery must not add deletion, re-encryption, migration, export, backup, or sync")
 
@@ -789,13 +798,13 @@ def verify_vault_content_architecture(root: Path) -> None:
             "DefaultVaultIndexRepository(" in container and "DefaultVaultImportRepository(" in container and
             "vaultContentCrypto" in container,
             "Stage 14 DI must share the single Stage 13 repository and Stage 2 crypto graph")
-    require("no network" in docs and "no plaintext" in docs and "stage 18" in docs,
+    require("no network" in docs and "no plaintext" in docs and "recovery" in docs,
             "vault foundation documentation must define privacy and deferred-scope limits")
     require("unindexed orphan" in stage14_docs and "64 kib" in stage14_docs and "stage 15" in stage14_docs and
             "stage 18" in stage14_docs,
             "Stage 14 documentation must define bounded streaming, orphan behavior, and scope boundaries")
-    require("stage14.md" in docs and "stage 14" in readme and "file import" in readme and "docs/vault/readme.md" in readme,
-            "README must describe the delivered Stage 14 import scope and vault documentation")
+    require("streaming aes-256-gcm" in docs and "file import" in readme and "docs/vault/readme.md" in readme,
+            "product documentation must describe streamed file import and link the detailed vault guide")
     require(not re.search(r"\bclass\s+\w*(?:Album|Trash|Restore|Thumbnail|Recovery)\w*", item + contracts + importer + screen),
             "Stage 14 must not implement Stage 15–18 presentation, trash, restore or recovery features")
 
@@ -824,6 +833,7 @@ def verify_vault_presentation_architecture(root: Path) -> None:
     decoder_test = source(root / "app/src/androidTest/java/com/ashishkumar/nivara/data/vault/AndroidVaultImageDecoderInstrumentedTest.kt")
     presentation_test = source(root / "app/src/androidTest/java/com/ashishkumar/nivara/data/vault/AndroidVaultContentPresentationInstrumentedTest.kt")
     docs = source(root / "docs/vault/stage15.md").lower()
+    vault_docs = source(root / "docs/vault/README.md").lower()
     readme = source(root / "README.md").lower()
 
     for path in sorted(domain.glob("*.kt")):
@@ -892,8 +902,9 @@ def verify_vault_presentation_architecture(root: Path) -> None:
     require("no plaintext cache" in docs and "not supported" in docs and "no permissions" in docs and
             "quick lock" in docs and "stage 16" in docs,
             "Stage 15 documentation must state unsupported formats, security/resource limits, and deferred scope")
-    require("stage15.md" in readme and "bounded image" in readme and "audio/video" in readme,
-            "README must make bounded image/text support and unsupported media behavior accurate")
+    require("docs/vault/readme.md" in readme and "bounded previews for images" in readme and
+            "video, audio, pdf" in readme and "no decrypted file or thumbnail is written to disk/cache" in vault_docs,
+            "product documentation must accurately state supported previews, unsupported media, and no plaintext cache")
 
 
 def verify_vault_organization_architecture(root: Path) -> None:
@@ -990,9 +1001,9 @@ def verify_vault_organization_architecture(root: Path) -> None:
             "search, sorting, and albums must not open or decrypt item content")
     require("vaultOrganizationRepository" in container and "vaultOrganizationRepository" in nav,
             "the existing dependency graph and navigation must bind the single organization repository")
-    require("stage16" in readme and "albums" in vault_docs and "sessionmanager" in stage_docs and
+    require("albums" in readme and "albums" in vault_docs and "sessionmanager" in stage_docs and
             "authorization callback" in stage_docs and "authenticated index" in stage_docs and "stale" in stage_docs,
-            "README and vault documentation must describe Stage 16 semantics and truthful security boundaries")
+            "product and vault documentation must describe album semantics and truthful security boundaries")
     require((root / "app/src/test/java/com/ashishkumar/nivara/domain/vault/content/VaultOrganizationTest.kt").is_file() and
             (root / "app/src/test/java/com/ashishkumar/nivara/data/vault/DefaultVaultOrganizationRepositoryTest.kt").is_file() and
             (root / "app/src/test/java/com/ashishkumar/nivara/ui/vault/VaultViewModelOrganizationTest.kt").is_file() and
@@ -1084,10 +1095,10 @@ def verify_vault_trash_architecture(root: Path) -> None:
     require("openObject" not in index_repo[index_repo.find("private suspend fun mutateLifecycle"):index_repo.find("private suspend fun pruneAfterVerifiedWrite")] and
             "writeObjectAtomically" not in index_repo[index_repo.find("private suspend fun mutateLifecycle"):index_repo.find("private suspend fun pruneAfterVerifiedWrite")],
             "trash state changes must not access, rewrite, or delete encrypted content objects")
-    require("stage 17" in readme and "trash" in vault_docs and "stage17" in vault_docs and
-            "album memberships" in stage_docs and "no permanent deletion" in stage_docs and
+    require("trash" in readme and "restore only" in readme and "no permanent deletion" in readme and
+            "trash" in vault_docs and "album memberships" in stage_docs and "no permanent deletion" in stage_docs and
             "no automatic expiry" in stage_docs,
-            "README and vault documentation must truthfully explain Trash, restore, metadata, and explicit exclusions")
+            "product and vault documentation must truthfully explain Trash, restore, metadata, and explicit exclusions")
     required_tests = (
         "app/src/test/java/com/ashishkumar/nivara/domain/vault/content/VaultIndexCodecTest.kt",
         "app/src/test/java/com/ashishkumar/nivara/data/vault/DefaultVaultIndexRepositoryTest.kt",
@@ -1284,15 +1295,28 @@ def main() -> None:
     verify_hidden_architecture(ROOT)
     verify_launcher_architecture(ROOT)
     hidden_docs = source(ROOT / "docs/apphide/README.md").lower()
-    for required in ("hiddenapplicationrepository", "unreadable", "atomicfile", "sessionmanager", "stage 11", "stock launcher", "cryptographically secret"):
+    for required in ("hiddenapplicationrepository", "unreadable", "atomicfile", "sessionmanager", "launcher", "stock launcher", "cryptographically secret"):
         require(required in hidden_docs, f"hidden-app documentation must cover {required!r}")
     launcher_docs = source(ROOT / "docs/launcher/README.md").lower()
     for required in ("category_home", "hiddenapplicationrepository", "fail-closed", "temporary", "quick lock", "settings", "api 28"):
         require(required in launcher_docs, f"launcher documentation must cover {required!r}")
     readme = source(ROOT / "README.md").lower()
-    for required in ("custom launcher", "app drawer", "normal home settings", "stage 12", "remain installed and functional"):
+    for required in ("nivara launcher", "app drawer", "normal home settings", "camouflage identity", "remain installed and functional"):
         require(required in readme, f"README must document {required!r}")
-    print("PASS: Stages 13–18 vault recovery/reconnection, trash/restore, albums, search, sorting, viewer integration, authenticated import/index, App Lock, hidden-app, launcher, persistence, auth, and permission contracts.")
+
+    user_docs = (
+        ROOT / "README.md", ROOT / "SECURITY.md", ROOT / "docs/vault/README.md",
+        ROOT / "docs/applock/README.md", ROOT / "docs/apphide/README.md",
+        ROOT / "docs/launcher/README.md", ROOT / "docs/camouflage/README.md",
+    )
+    for path in user_docs:
+        text = source(path)
+        require(not re.search(r"\bStages?\s*\d", text, re.IGNORECASE),
+                f"user-facing documentation must not include internal stage history: {path.relative_to(ROOT)}")
+        require(not re.search(r"\b(?:AI|agent)\b|AI-generated", text, re.IGNORECASE),
+                f"user-facing documentation must not include AI/agent references: {path.relative_to(ROOT)}")
+
+    print("PASS: Vault recovery, integrity, import/viewer, Trash/Restore, organization, App Lock, hidden-app, launcher, camouflage, session, cryptographic, and permission contracts.")
 
 
 if __name__ == "__main__":

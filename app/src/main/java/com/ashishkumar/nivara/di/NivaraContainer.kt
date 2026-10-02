@@ -143,6 +143,7 @@ class DefaultNivaraContainer(context: Context) : NivaraContainer {
             indexRepository = vaultIndexRepository,
             organizationRepository = vaultOrganizationRepository,
             random = secureRandom,
+            timeProvider = credentialClock,
         )
     }
     private val safVaultContentStorage by lazy {

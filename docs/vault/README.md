@@ -1,140 +1,68 @@
-# External encrypted vault — Stages 13–18
+# External encrypted vault
 
-## Purpose and current scope
+## User-visible behavior
 
-Stage 13 establishes the single explicitly selected external vault root, authenticated/versioned metadata, and typed inspection/initialization failures. Stage 14 adds one-document SAF import, per-item streaming AES-GCM objects, and an authenticated versioned index. Stage 15 adds authenticated-MIME classification, a user-facing item viewer, bounded in-memory image and plain-text previews, and explicit unsupported/error states. Stage 16 adds encrypted album metadata, Unicode-aware metadata-only search, deterministic sorting, and explicit stale-reference handling. Audio/video playback, PDF and other document rendering, and thumbnails remain deferred. Stage 17 implements reversible item-level Trash and Restore in the authenticated index; it does not add deletion or expiration. Stage 18 adds optional, explicit recovery/reconnection without changing the content-key hierarchy. See [Stage 15 implementation notes](stage15.md), [Stage 16 organization](stage16.md), [Stage 17 trash](stage17.md), the [Stage 18 recovery flow](stage18.md), and the [Stage 18 architecture audit](stage18-architecture-audit.md).
+The vault stores individually imported documents as encrypted objects in one folder that the user explicitly selects with Android's Storage Access Framework (SAF). The app supports metadata browsing, albums, metadata-only search and sorting, reversible Trash/Restore, and optional key recovery. The viewer supports bounded in-memory previews for decodable images and strict UTF-8 plain text. Audio, video, PDF, office documents, and other unsupported types are not opened. MIME classification is descriptive and does not promise that a particular device can decode an image format.
 
-## External storage mechanism and root selection
+Trash and Restore change authenticated index metadata only. They do not delete or rewrite encrypted content. There is no permanent deletion, secure erase, automatic expiry, or content migration. Recovery reconnects the same vault key; it does not recover account credentials, biometrics, a session, or Android's storage grant.
 
-Nivara uses Android's Storage Access Framework through `ACTION_OPEN_DOCUMENT_TREE`. The user explicitly chooses a writable directory in a system document picker; Nivara does not select Downloads, DCIM, Pictures, Documents, a fixed `/storage` path, or private app storage. The choice is persisted using the returned persistable read/write URI grant and the exact document-tree URI in app-private preferences. URI parsing, permission grants, `DocumentsContract`, and document I/O remain in `data.vault`; neither the Android-free domain nor Compose state contains a `Uri`, `DocumentFile`, `File`, or raw path.
+## Storage selection and access
 
-The selected directory itself is the vault root. It must be a writable document tree with create support and be empty at initialization. The system provider must support create, read-back, and rename for the initialization transaction; the adapter checks the pending document's advertised rename capability before committing. If the same tree is picked again, Nivara restores/reconnects its persisted grant. Android 11 (API 30) and later prevent selecting the internal-storage root, reliable SD-card roots, and `Download` as a tree; `Android/data` and `Android/obb` are also restricted. Thus the user's available choices depend on platform policy and provider. A different tree is rejected while one root is bound; it is never silently substituted. Selection cancellation, denied grants, provider failures, and a different-root choice leave the previous selection unchanged.
+Nivara uses `ACTION_OPEN_DOCUMENT_TREE` and requires an explicit user choice of a writable directory. This uses Android's scoped storage model without broad storage permission. The existing vault status destination links to a separate root-configuration destination; both use the existing session gate. It does not choose Downloads, DCIM, Pictures, Documents, app-private storage, or a raw filesystem path. It retains the exact returned document-tree URI and persistable read/write grant in app-private preferences. URI parsing, grants, `DocumentsContract`, and document I/O remain in the data layer; Android-free domain and UI state do not carry `Uri`, `DocumentFile`, `File`, or raw paths.
 
-The tree URI is location metadata, not a credential or key. It is not logged or shown in UI. Losing/revoking the persisted grant yields an explicit **Access denied** or **Unavailable** state; users can re-pick the exact same tree. A new installation has no automatic access to the prior URI and must explicitly reselect it. There is no fallback to internal or another public directory. A fresh installation must explicitly select the same SAF tree again; Stage 18 recovery does not restore URI grants or add root replacement/migration.
+The selected directory itself is the vault root. Initialization requires an accessible, empty location and provider support for create, read-back, and rename. The same tree must be selected again after a grant is lost or after reinstall. A different location is not silently substituted, and there is no fallback, path scan, automatic adoption, or repair. Android 11 (API 30) and later restrict selection of some locations, including internal-storage roots and `Download`; available choices depend on Android and the document provider. The app's minimum supported API is 28.
 
-## Directory structure
+Losing or revoking access produces an explicit Access denied or Unavailable state. Cancellation, a denied grant, provider failure, or a different-root selection leaves the prior selection unchanged. A new installation has no automatic access to the prior URI and must explicitly reselect the same SAF tree.
 
-Stage 13 initialization creates only these entries inside the user-selected empty directory:
+## Data layout and formats
+
+Initialization uses an atomic create-only transaction. The root is dedicated to Nivara and contains a metadata record, a `data/` directory, and, when explicitly configured, an optional recovery sidecar:
 
 ```text
 <selected tree>/
-├── vault.nvmeta       # encrypted/authenticated vault metadata record
-└── data/              # content root, initially empty
+├── vault.nvmeta             # versioned encrypted/authenticated vault header
+├── vault.nvrec               # optional encrypted wrapper for the existing vault key
+└── data/
+    ├── index/                # immutable authenticated index generations
+    ├── objects/              # generated encrypted content objects
+    └── organization/         # encrypted album names and item-ID references
 ```
 
-After explicit Stage 14 index initialization, the same `data/` contains:
+Pending siblings and object/index temporary files are recognized only during their corresponding write transaction. Unexpected entries, invalid pending records, wrong-type directories, unsupported versions, truncation, and trailing bytes fail closed. The app never treats a pending file as committed content. The index is authoritative: it is not reconstructed by scanning object names. An encrypted object left without a successful index commit remains an unindexed orphan and is reported as such.
 
-```text
-data/
-├── index/             # immutable authenticated index generations (*.vxi)
-└── objects/           # finalized encrypted items (<random-item-id>.nvc)
+The outer metadata record uses the `NIVLT13M` magic, an explicit format version, a random non-secret vault identifier, a wrapped-key envelope, and an authenticated encrypted header. The header binds the vault identifier and contains no path, credential, recovery secret, biometric data, or plaintext key. Parsing is bounded and distinguishes corrupt data from unsupported versions and a genuinely uninitialized root. No network, analytics, or telemetry is used, and no plaintext credentials or raw content keys are stored in vault files.
+
+Content imports use unique generated item IDs, per-item random keys, a separate wrapped-key purpose, authenticated index metadata, and streaming AES-256-GCM encryption with bounded memory. Reads verify the final GCM tag before any preview is exposed. The source document is opened through a transient SAF selection handle; source URIs are not retained as vault item metadata. Original filenames are not used as object paths.
+
+## Key, session, and recovery boundaries
+
+The vault uses the existing `KeyWrappingService`, `AuthenticatedEncryption`, Android Keystore, and `SessionManager` contracts. It does not add a credential-derived content key, a software-key fallback, a second session, or an authentication cache. The device wrapping key is non-exportable under the Android Keystore contract, but is not configured to require biometric authentication on every operation. Repository operations recheck the existing session and authorization checkpoints.
+
+The optional recovery code is a random 256-bit artifact with typo-detection encoding. It wraps the same vault content key under a separate authenticated envelope; it does not re-encrypt content objects, index generations, or album records. The code is shown for the user to save and is not persisted, shared, or exported by the app. Recovery requires a newly enrolled local primary credential, explicit selection of the original SAF tree, and explicit code entry. The repository validates the vault identity and any existing authenticated records before persisting a new installation-local Keystore wrapper. It does not initialize, migrate, repair, or prune the selected vault. Recovery-code rotation is not supported.
+
+Failed recovery-envelope authentication is serialized and receives an in-memory exponential retry delay, capped at 30 seconds. Success resets the delay; process recreation clears it. This bounded delay is defense in depth, not a replacement for the recovery code's entropy or authenticated encryption.
+
+## Organization, Trash, and viewing
+
+Albums store names and ordered stable item IDs; authenticated item metadata remains in the index. Search normalizes and sorts authenticated metadata only and does not open or decrypt content objects. Stale references remain explicit and are not silently pruned. Trash is an authenticated lifecycle marker in index rows. Restoring an item preserves its ID and album references. Trash does not create a content copy or directory.
+
+Index updates use immutable generations and preserve the previous authoritative generation until the new one has been written, flushed, read back, decrypted, authenticated, and verified. Only then may older generations be pruned. If verification fails, the previous authoritative generation remains available. SAF providers do not offer a universal `fsync`, cross-process lock, or power-loss guarantee; provider-specific durability beyond the verified operations cannot be promised.
+
+The viewer holds only typed UI state and an opaque handle, not raw keys, paths, URIs, streams, or whole-file plaintext. Image data is size-capped and sampled for bounded in-memory rendering; `text/plain` uses strict UTF-8 and a size limit. No decrypted file or thumbnail is written to disk/cache. PDF, audio, video, and other unsupported categories receive an explicit unsupported state; full-file plaintext staging, sharing/export, and external open-with are not used to enable playback or rendering. Viewer resources close on explicit exit, screen disposal, Activity pause, session invalidation, and Quick Lock.
+
+## Explicit states and limitations
+
+The UI distinguishes root not selected, Not initialized, Ready, Access denied, Unavailable, Corrupt, Unsupported, and initialization failure. Missing, corrupt, inaccessible, unavailable, and unsupported data are never presented as an empty vault or as permission to overwrite. Recovery also distinguishes invalid code material, failed envelope authentication, damaged records, unsupported versions, and location/provider failures.
+
+SAF provider behavior varies. Rename/read-back support, large imports, image codec support, Android UI lifecycle, biometric behavior, and device-maker background policies require verification on target devices. Android test-source compilation is not the same as running instrumented tests on an emulator or device. For local device execution, connect an API 28+ device/emulator and run:
+
+```sh
+./gradlew connectedDebugAndroidTest
 ```
 
-`vault.nvmeta.pending` is a temporary sibling used only during Stage 13 initialization. Stage 14 initially allowed only the `index/` and `objects/` subdirectories directly inside `data/`; Stage 16 extended the strict allow-list with `organization/`. Unexpected entries or wrong-type directories remain an invalid structure. Index/object pending files are temporary, generated, and never treated as indexed content. No thumbnail, standalone album file under `data/`, trash directory, or plaintext file is created. Stage 16 organization metadata lives in its explicitly initialized `data/organization/` directory. Stage 17 Trash is an authenticated lifecycle marker in index records; it creates no per-item content copy or Trash directory. After explicit Stage 18 recovery setup, the root may also contain the optional `vault.nvrec` recovery sidecar. Its temporary sibling `vault.nvrec.pending` is recognized only during its atomic create-only write; a pending or invalid sidecar fails closed. Stage 13 initialization itself still creates only `vault.nvmeta` and `data/`. The root must remain dedicated to Nivara.
+The repository architecture verifier and Python negative harness can be run with:
 
-## UI and navigation
-
-The existing navigation graph contains a thin vault status destination and a separate root-configuration destination. The configuration screen exposes only an explicit button that launches the system picker; the Activity Result boundary returns a domain-safe outcome and never passes the selected URI into Compose. Both inspection/initialization and root configuration recheck the existing `SessionManager` gate. The vault adds no Activity, secondary navigation graph, or authentication flow.
-
-## Metadata format and authentication
-
-The outer binary record uses magic `NIVLT13M`, a big-endian 32-bit format version (`1`), a random 128-bit non-secret vault identifier, length-prefixed Stage 2 `WrappedKeyEnvelope` bytes, and a length-prefixed Stage 2 `EncryptedEnvelope` for the header. Parsing is length-bounded and rejects malformed/truncated records, unsupported versions, and trailing bytes. A future format version is surfaced as **Unsupported**, not as uninitialized.
-
-The encrypted header plaintext is deliberately minimal: magic `NVHDR13\0`, its 32-bit header version (`1`), and the vault identifier. It contains no path, creation time, credentials, verifier, biometric data, recovery secret, or plaintext key. No plaintext credentials or raw content keys are stored in the vault record. The header and wrapped key are authenticated by the existing AES-GCM/key-wrapping contracts. The outer magic/version and vault identifier are format/routing fields; they are not relied on as authentication by themselves.
-
-## Key hierarchy and existing Stage 2 integration
-
-1. User authentication and app authorization remain Nivara's existing primary credential/biometric flow and single `SessionManager`. The vault screen checks `SessionManager.currentState()` and `mayAccessSensitiveContent()` before inspect/initialize. The repository does not authenticate, derive from credentials, establish or lock sessions, or own a timeout.
-2. Initialization obtains 32 random bytes for a vault content key and a separate 16-byte vault identifier through the existing `SecureRandomSource`. Temporary byte arrays are cleared after use.
-3. The content key is wrapped with the existing `KeyWrappingService` and `KeyProtection.ANDROID_KEYSTORE`, using the existing `DeviceKeyStore` key alias `vault_content_wrap_v1`. The purpose and vault identifier are authenticated as context.
-4. The small header is encrypted using the existing `AuthenticatedEncryption` service (the Stage 2 AES-256-GCM implementation), with a distinct header purpose and the same vault identifier as AAD binding.
-5. The repository discards the raw key after initialization/inspection and does not expose it to Compose or `SessionManager`. No Stage 2 primitive, key derivation, AES/GCM, nonce generation, or Android Keystore implementation is duplicated. The existing credential `CredentialKeyDeriver` is intentionally not used for vault keys.
-
-The device wrapping key is non-exportable under the existing Android Keystore contract, but it is not configured to require biometric authentication for each operation. UI authorization is provided by the existing session gate; this does not turn presentation code into a platform security boundary. The Stage 13 base record still has only its Android Keystore wrapper. Stage 18 adds a distinct optional `vault.nvrec` recovery wrapper for the same content key; users must configure and save its random recovery code before losing the installation key. A missing local wrapper with a valid recovery sidecar enters an explicit recovery-required state; without a configured recovery wrapper, the key remains unavailable.
-
-## Initialization and reopen behavior
-
-Initialization is explicit and only offered after inspection finds an accessible, empty selected root. The repository and SAF adapter serialize their own operations with coroutine `Mutex` instances within this app process; this is not an OS-wide or cross-process lock. Initialization rechecks root emptiness and verifies the final structure, so provider/user races fail closed rather than authorize replacement. The repository creates a fresh identifier and content key, wraps/encrypts the header through Stage 2 services, encodes the versioned record, and asks the SAF adapter to:
-
-1. recheck that the exact selected root is empty;
-2. create the reserved `data/` directory;
-3. create `vault.nvmeta.pending`, write the bounded record, close it, and read it back byte-for-byte;
-4. rename the pending document to `vault.nvmeta`;
-5. read back the committed metadata and verify the required root entries;
-6. let the repository unwrap/decrypt/authenticate the header and confirm the vault identifier before returning success.
-
-A second initialization never overwrites a valid vault. Existing, corrupt, unsupported, inaccessible, or structurally invalid state is never replaced. Inspection after process recreation resolves only the persisted exact URI/grant; there is no automatic directory fallback. A valid record is **Ready** only after both required entries and both cryptographic authentication checks pass.
-
-## Explicit states and fail-closed behavior
-
-Domain/UI state distinguishes:
-
-- root not selected;
-- selected root with no marker and no `data/` entry (**Not initialized**);
-- authenticated initialized root (**Ready**);
-- storage unavailable;
-- Android access denied/revoked;
-- unreadable or malformed/authentication-failing metadata (**Corrupt metadata**);
-- unsupported metadata, wrapped-key, or encrypted-header version/algorithm;
-- incomplete, wrong-type, or unexpected root structure (**Invalid structure**);
-- initialization in progress and typed initialization failure.
-
-A lone `data/` directory, a lone metadata record, temporary/pending artifacts, unexpected root entries, a bad GCM tag, wrong key material, and truncated bytes do not become an empty vault. A missing Android Keystore key is reported as unavailable, not corruption or an empty vault. No failure path silently chooses another root or reports successful initialization.
-
-## Atomicity and cleanup limits
-
-SAF providers do not expose a universal filesystem transaction or promise that `DocumentsContract.renameDocument` is atomic. The adapter uses a same-directory pending document, closes and verifies it before rename, verifies the renamed bytes, and the domain authenticates the complete record again before accepting **Ready**. Read-back confirms observed provider bytes but is not an `fsync` or a power-loss durability guarantee; SAF has no portable durability primitive. A provider that refuses create/read-back/rename cannot initialize the vault. Provider-level crash behavior cannot be proven by this protocol; interrupted leftovers are rejected as invalid, never accepted as ready.
-
-When initialization fails, cleanup targets only the exact pending/final document and empty `data/` directory created by that attempt. It does not recursively delete the selected folder or pre-existing user data. Cleanup failure is surfaced separately; it may leave an invalid, non-ready structure requiring user/provider intervention. No replacement write API exists in Stage 13. Later metadata updates must preserve the same temporary-write, verify, rename, and post-write authentication discipline.
-
-## Permissions and Android compatibility
-
-The SAF document picker and persistable URI grants avoid broad filesystem access. No `MANAGE_EXTERNAL_STORAGE`, `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`, `QUERY_ALL_PACKAGES`, notification permission, accessibility service, device admin, or vault foreground service is added. The app retains only its pre-existing Stage 1–12 permissions and narrow package visibility.
-
-The implementation uses `ACTION_OPEN_DOCUMENT_TREE`, persisted URI grants, and `DocumentsContract`, available on the Android 9 / API 28 minimum and compatible with Android's scoped storage APIs. Android 10–12 and Android 13+ behavior still depends on each selected document provider and its support for create/read/rename. Compatibility was assessed from the API boundary and verifier, not exercised on those OS versions. No external-storage runtime test is claimed. See Android's [shared-storage SAF guide](https://developer.android.com/training/data-storage/shared/documents-files) and [`DocumentsContract.renameDocument` reference](https://developer.android.com/reference/android/provider/DocumentsContract#renameDocument(android.content.ContentResolver,android.net.Uri,java.lang.String)).
-
-## Privacy/security boundaries and independence
-
-Stage 13 alone did not import vault content; Stage 14 now provides streamed file-content encryption described in [stage14.md](stage14.md). The metadata/header foundation is encrypted/authenticated using Stage 2 services. The selected URI, file names, paths, vault identifiers, keys, and plaintext header are not logged; no network or analytics code is present. The vault does not access credentials, hidden-app or protected-app repositories, App Lock, or camouflage identity. It adds no Activity or secondary navigation graph; its status and root-configuration destinations are registered in the existing graph and are reachable from Nivara Home regardless of the fixed Stage 12 presentation label.
-
-## Stage 14 implementation notes
-
-The Stage 14 item/index/object format, scoped per-item key handling, streamed import transaction, session-expiry/orphan behavior, concurrency limits, verifier coverage, and deferred scope are documented in [stage14.md](stage14.md). In particular, finalized objects without a successful authenticated index commit remain **unindexed orphans**; the index is never reconstructed by scanning objects.
-
-## Stage 15 presentation
-
-Stage 15 keeps the same authenticated item/index/object formats and `SessionManager`. MIME classification uses only authenticated `originalMimeType`; missing/invalid MIME maps to Other and no file extension is consulted. The platform presentation gateway re-reads the current authenticated index row, opens the corresponding generated object through the existing read-only storage boundary, and invokes Stage 14 quarantine decryption. A preview is withheld until streaming GCM tag verification succeeds. Only bounded in-memory image (16 MiB compressed maximum, sampled to a 1,536-pixel render dimension) and strict UTF-8 `text/plain` (256 KiB maximum) previews are implemented. No decrypted file or thumbnail is written to disk/cache.
-
-MIME classification also recognizes image, audio, video, and document categories, but category recognition is not viewer support. PDF, audio, video, office/OpenDocument, and generic/unknown content receive explicit unsupported presentation. The current sequential GCM format is not exposed through an unauthenticated prefix, and full-file plaintext staging is deliberately not used to make Android media playback seekable. See [stage15.md](stage15.md) for tested-vs-unverified format detail and lifecycle/session behavior. No broad storage/media permission, sharing, external open-with, index repair, or object deletion was added.
-
-## Stage 16 albums, search, sorting, and organization
-
-Stage 16 adds a bounded, versioned organization record under `data/organization/`, encrypted with the existing vault content key through a distinct Stage 2 organization purpose. Albums persist only names and ordered `VaultItemId` references; item metadata stays authoritative in the authenticated index. Empty albums and multiple memberships are supported; duplicate membership requests return `AlreadyMember` without a write. Stale references are explicit and ordinary reads never prune them. Album deletion and membership removal affect organization metadata only.
-
-The existing screen now provides All Items, Albums, and Search, with deterministic name/size/import-time/type sort and stable ID tie-breaking. Search uses Unicode NFC normalization, locale-independent case folding and whitespace collapsing over authenticated filename, MIME and classifier metadata only; it never opens/decrypts objects or persists query history. Empty, no-match, unavailable, unreadable and unsupported index/organization states are distinct. All item selections still enter the single Stage 15 viewer by item identity. See [stage16.md](stage16.md) for bounds, record validation, generation commits, crash behavior, and test sources.
-
-## Tests and runtime status
-
-JVM tests cover Stage 13 metadata/header codecs, actual Stage 2 AES-GCM/key wrapping, initialization/idempotence and failure states, plus Stage 14 deterministic bounded index codecs, streamed GCM round trips/tampering, content-key integration, importer checkpoints, index corruption/write failures, and orphan outcomes. Stage 16 JVM sources cover album/domain codecs, Unicode search, all sort keys and stable tie-breaking, stale references, authorization, generation readback/rollback/pruning, corruption, and ViewModel-facing state; a real JCA integration test checks the distinct organization purpose. Instrumented sources exercise Android JCA streaming with multi-megabyte inputs and nonce sampling, image decoding, and organization/search contracts; execution requires a connected Android device/emulator. Device/provider execution, real persisted grants, rename guarantees, and Android UI behavior require device verification. No test is described as compiled or run unless it actually was.
-
-
-## Stage 17 Trash and Restore
-
-Stage 17 extends each authenticated index row with a versioned lifecycle (`ACTIVE` or `TRASHED`), an optional trash timestamp, and an optional 32-byte SHA-256 digest. Index v2 reads legacy v1 rows as Active with no trash timestamp or digest; a later v2 write preserves their identity and existing metadata. The digest is computed incrementally from plaintext only while a new import is already streaming into the existing encryption operation, then stored as authenticated index metadata. It does not alter the encrypted object format. Since pre-Stage-17 rows never recorded a digest, they remain digest-less; Trash does not read/decrypt objects to derive one.
-
-Trash and Restore mutate only the authenticated index. They preserve stable `VaultItemId`, names, MIME classification inputs, verified plaintext/object sizes, import time, content-format version, existing digest and wrapped item key. Encrypted object bytes are neither opened nor rewritten. No second item database, storage directory, key, crypto primitive, session, permission, or background service is introduced. Missing objects remain represented by their index metadata and diagnostics; Restore does not reconstruct an object. Unindexed finalized objects and unfinished object writes remain outside item-level Trash and retain their existing diagnostics.
-
-Albums continue to hold the same item-ID references across both transitions. An active album resolves a trashed member as an explicit inactive reference, hiding it from the active item list without deleting the membership. Restore resolves that same ID as active again; deleting an album still deletes only organization metadata and references, never vault content.
-
-Active browsing/search/sorting and album item rows exclude trashed items. The independent Trash collection has deterministic sorting (most-recently-trashed by default, stable item-ID tie-break), optional Stage 16-normalized metadata search, missing-content messages, and Restore-only actions; it does not open items in the Stage 15 viewer. Empty Trash is shown only after an authenticated readable index establishes that no trashed rows exist. Locked, missing, corrupt/unreadable, unsupported, inaccessible, and unavailable states are kept distinct and never rendered as empty Trash.
-
-Every state mutation checks the existing `SessionManager`, serializes with index changes in the repository, requires the expected starting lifecycle, checks authorization again at commit, and accepts success only after decrypting/authenticating the newly stored index generation and comparing the complete preserved row state. Already-transitioned results are typed and idempotent. The SAF adapter retains the new committed index generation plus its predecessor and prunes older index files only after readback succeeds. It verifies byte readback and commit behavior but cannot provide universal provider `fsync`, cross-process serialization, or power-loss guarantees. If post-write verification or authorization fails, the new unverified index generation is discarded where SAF permits; the previous generation is retained. Failure of optional pruning does not invalidate a verified state change.
-
-**Permanent deletion is explicitly absent.** There is no Empty Trash, secure erase, content-object deletion, overwrite, automatic expiration, or item migration in Stage 17. A Trash transition is reversible index metadata only; it is not a secure-erasure promise. Stage 18 recovery is a separate wrapper and does not change these Stage 17 lifecycle semantics. See [stage17.md](stage17.md) and [stage18.md](stage18.md) for the respective acceptance boundaries and tests.
-
-
-## Stage 18 recovery and fresh-install behavior
-
-Recovery is an opt-in, explicit reconnection mechanism for a random 256-bit recovery artifact and the **existing** vault content key. It reuses Stage 2 `KeyWrappingService` with `KeyProtection.RECOVERY`; the Stage 2 history contains generic primitives, not a canonical recovery envelope or flow. Nivara shows a one-time Base32 code with a typo-detection checksum, writes only an encrypted wrapper after explicit confirmation, and does not save/share/export the code. The wrapper is in `vault.nvrec`; base metadata, encrypted content objects, item-key envelopes, index generations (including Trash), and album records are not re-encrypted or rewritten.
-
-After reinstall, the user must first enroll and authenticate with a **new local primary credential**, explicitly reselect the exact SAF tree, and then explicitly submit the saved recovery code. Recovery verifies identity/header and existing authenticated index/organization records before persisting a new installation-local Keystore wrapper. It does not restore the old credential, biometric enrollment, session, or URI permission. Missing optional organization/index records are preserved; present invalid/unsupported records fail closed. Recovery never initializes, reconstructs, migrates, prunes, or repairs a selected vault. Recovery-code rotation is not supported. The 256-bit code is unguessable by design, so there is no separate recovery-guess throttle; parsing is bounded and the authenticated envelope is still required. See [stage18.md](stage18.md) for exact flow, limits, and failure states.
+```sh
+python3 tools/verify_nivara.py
+python3 -m unittest discover -s tools -p 'test_*.py'
+```

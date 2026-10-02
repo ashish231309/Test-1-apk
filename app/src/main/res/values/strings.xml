@@ -7,7 +7,7 @@
     <string name="credential_configured">Primary credential: %1$s</string>
     <string name="credential_verify">Verify credential</string>
     <string name="credential_change">Change primary credential</string>
-    <string name="credential_configuration_unavailable">Credential configuration is unavailable. Secure recovery will be provided in a later stage.</string>
+    <string name="credential_configuration_unavailable">Credential configuration is unavailable. Nivara cannot safely verify or change credentials while this state persists.</string>
     <string name="credential_select_title">Choose one primary method</string>
     <string name="credential_type_pin">PIN</string>
     <string name="credential_type_password">Password</string>

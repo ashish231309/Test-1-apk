@@ -10,7 +10,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** The sole repository owner used by Stage 10 management and intended Stage 11 launcher consumers. */
+/** The sole repository owner shared by hidden-app management and launcher consumers. */
 class AndroidHiddenApplicationRepository internal constructor(
     private val fileStore: HiddenApplicationFileStore,
 ) : HiddenApplicationRepository {
@@ -70,7 +70,7 @@ class AndroidHiddenApplicationRepository internal constructor(
     }
 
     companion object {
-        /** The default singleton binding is also the stable contract Stage 11 will consume. */
+        /** The default singleton binding is shared by the management UI and launcher. */
         fun create(context: Context): AndroidHiddenApplicationRepository =
             AndroidHiddenApplicationRepository(AndroidAtomicHiddenApplicationStore(context))
 

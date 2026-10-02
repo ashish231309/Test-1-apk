@@ -39,7 +39,7 @@ class CamouflageVerifierTest(unittest.TestCase):
             "primary-credential/biometric flow. Camouflage does not provide invisibility, encryption, "
             "anti-forensics; it is not a security boundary. Android Settings; no new permission.",
         )
-        self._write("README.md", "ordinary recovery entry; not invisibility; docs/camouflage/README.md")
+        self._write("README.md", "ordinary recovery entry; not concealment from Android; docs/camouflage/README.md")
 
     def tearDown(self) -> None:
         self.temp.cleanup()

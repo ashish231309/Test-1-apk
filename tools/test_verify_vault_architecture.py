@@ -114,7 +114,7 @@ class VaultVerifierTest(unittest.TestCase):
             ("app/src/androidTest/java/com/ashishkumar/nivara/data/vault/AndroidVaultImageDecoderInstrumentedTest.kt",
              "wideImageIsSampledToTheConfiguredRenderDimension", "wideImageSamplingTestRemoved", False),
             ("docs/vault/stage15.md", "No plaintext cache is used", "A plaintext cache is used", False),
-            ("README.md", "docs/vault/stage15.md", "docs/vault/stage14.md", True),
+            ("docs/vault/README.md", "No decrypted file or thumbnail is written to disk/cache", "A decrypted file or thumbnail is written to disk/cache", False),
         )
         for relative, old, new, all_matches in mutations:
             with self.subTest(path=relative, old=old):
@@ -403,7 +403,7 @@ class VaultVerifierTest(unittest.TestCase):
         )
 
     def test_documentation_scope_and_limitations_are_required(self) -> None:
-        self._mutate_all_and_reject("docs/vault/README.md", "Stage 14", "later stage")
+        self._mutate_all_and_reject("docs/vault/README.md", "Storage Access Framework", "raw filesystem access")
         self._mutate_all_and_reject(
             "docs/vault/README.md",
             "root-configuration destination",

@@ -340,6 +340,7 @@ class VaultViewModel(
 
     private fun recoveryFailureMessage(reason: VaultRecoveryFailure): String = when (reason) {
         VaultRecoveryFailure.INVALID_MATERIAL -> "The recovery code is invalid or incomplete. Check it and try again."
+        VaultRecoveryFailure.THROTTLED -> "Too many unsuccessful recovery checks. Wait briefly before trying again."
         VaultRecoveryFailure.LOCATION_UNAVAILABLE -> "The selected vault location is unavailable. Re-select the original SAF folder and try again."
         VaultRecoveryFailure.ACCESS_DENIED -> "The selected vault folder is not accessible. Re-select the original SAF folder."
         VaultRecoveryFailure.NOT_A_VAULT -> "This folder is not an initialized Nivara vault. Nothing was changed."

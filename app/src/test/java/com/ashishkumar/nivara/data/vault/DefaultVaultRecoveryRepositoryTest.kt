@@ -1,6 +1,7 @@
 package com.ashishkumar.nivara.data.vault
 
 import com.ashishkumar.nivara.domain.security.SecureRandomSource
+import com.ashishkumar.nivara.domain.security.TimeProvider
 import com.ashishkumar.nivara.data.security.JcaSecureRandomSource
 import com.ashishkumar.nivara.domain.vault.ExistingVaultRecordsValidation
 import com.ashishkumar.nivara.domain.vault.RecoveryCryptographyFailure
@@ -104,6 +105,39 @@ class DefaultVaultRecoveryRepositoryTest {
     }
 
     @Test
+    fun failedEnvelopeAuthenticationIsRateLimitedInMemoryAndSuccessResetsIt() = runTest {
+        val harness = Harness()
+        harness.crypto.reconnectFailure = RecoveryCryptographyFailure.WRONG_VAULT
+        val wrongCode = VaultRecoveryCodeCodec.encode(ByteArray(32) { 4 }).toCharArray()
+        assertEquals(
+            VaultRecoveryResult.Failed(com.ashishkumar.nivara.domain.vault.VaultRecoveryFailure.WRONG_VAULT),
+            harness.repository.recover(wrongCode),
+        )
+        assertTrue(wrongCode.all { it == '\u0000' })
+
+        val blockedCode = "bounded input".toCharArray()
+        assertEquals(
+            VaultRecoveryResult.Failed(com.ashishkumar.nivara.domain.vault.VaultRecoveryFailure.THROTTLED),
+            harness.repository.recover(blockedCode),
+        )
+        assertTrue(blockedCode.all { it == '\u0000' })
+
+        harness.clock.elapsedMillis += 1_000L
+        harness.crypto.reconnectFailure = null
+        val validCode = VaultRecoveryCodeCodec.encode(ByteArray(32) { 5 }).toCharArray()
+        assertEquals(VaultRecoveryResult.Reconnected(TEST_VAULT_ID), harness.repository.recover(validCode))
+        assertTrue(validCode.all { it == '\u0000' })
+
+        harness.crypto.reconnectFailure = RecoveryCryptographyFailure.WRONG_VAULT
+        val afterReset = VaultRecoveryCodeCodec.encode(ByteArray(32) { 6 }).toCharArray()
+        assertEquals(
+            VaultRecoveryResult.Failed(com.ashishkumar.nivara.domain.vault.VaultRecoveryFailure.WRONG_VAULT),
+            harness.repository.recover(afterReset),
+        )
+        assertTrue(afterReset.all { it == '\u0000' })
+    }
+
+    @Test
     fun missingIndexAndOrganizationRemainMissingAndDoNotTriggerInitialization() = runTest {
         val harness = Harness().apply {
             index.result = VaultIndexRead.Missing
@@ -121,11 +155,17 @@ class DefaultVaultRecoveryRepositoryTest {
 
     private class Harness {
         val random: SecureRandomSource = JcaSecureRandomSource()
+        val clock = FakeClock()
         val storage = FakeStorage(TEST_VAULT_ID)
         val crypto = FakeCryptography()
         val index = FakeIndexRepository()
         val organization = FakeOrganizationRepository()
-        val repository = DefaultVaultRecoveryRepository(storage, crypto, index, organization, random)
+        val repository = DefaultVaultRecoveryRepository(storage, crypto, index, organization, random, clock)
+    }
+
+    private class FakeClock(var elapsedMillis: Long = 10_000L) : TimeProvider {
+        override fun nowEpochMillis(): Long = elapsedMillis
+        override fun nowElapsedRealtimeMillis(): Long = elapsedMillis
     }
 
     private class FakeStorage(private val vaultId: VaultId) : VaultStorage {
@@ -163,6 +203,7 @@ class DefaultVaultRecoveryRepositoryTest {
 
     private class FakeCryptography : VaultRecoveryCryptography {
         var verifiedPreparedRecord = false
+        var reconnectFailure: RecoveryCryptographyFailure? = null
         override suspend fun wrapExistingContentKey(
             vaultId: VaultId,
             recoveryKeyBytes: ByteArray,
@@ -180,8 +221,10 @@ class DefaultVaultRecoveryRepositoryTest {
             vaultId: VaultId,
             recoveryKeyBytes: ByteArray,
             validateExistingRecords: suspend () -> ExistingVaultRecordsValidation,
-        ): RecoveryReconnectKeyResult = when (validateExistingRecords()) {
-            ExistingVaultRecordsValidation.VALID -> RecoveryReconnectKeyResult.Reconnected
+        ): RecoveryReconnectKeyResult {
+            reconnectFailure?.let { return RecoveryReconnectKeyResult.Failed(it) }
+            return when (validateExistingRecords()) {
+                ExistingVaultRecordsValidation.VALID -> RecoveryReconnectKeyResult.Reconnected
             ExistingVaultRecordsValidation.DAMAGED -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.RECORDS_DAMAGED)
             ExistingVaultRecordsValidation.UNSUPPORTED -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
             ExistingVaultRecordsValidation.ACCESS_DENIED -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.ACCESS_DENIED)

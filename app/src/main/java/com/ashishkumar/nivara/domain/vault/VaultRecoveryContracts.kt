@@ -33,6 +33,7 @@ sealed interface VaultRecoverySetupCommitResult {
 
 enum class VaultRecoveryFailure {
     INVALID_MATERIAL,
+    THROTTLED,
     LOCATION_UNAVAILABLE,
     ACCESS_DENIED,
     NOT_A_VAULT,

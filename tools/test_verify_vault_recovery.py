@@ -86,6 +86,20 @@ class VaultRecoveryVerifierTest(unittest.TestCase):
             "sessionManager.currentState() is SessionState.Unauthenticated && sessionManager.mayAccessSensitiveContent()",
         )
 
+    def test_unbounded_recovery_retry_delay_is_rejected(self) -> None:
+        self._mutate_and_reject(
+            "app/src/main/java/com/ashishkumar/nivara/domain/vault/VaultRecoveryThrottle.kt",
+            "MAX_DELAY_MILLIS = 30_000L",
+            "MAX_DELAY_MILLIS = Long.MAX_VALUE",
+        )
+
+    def test_recovery_failure_without_throttle_recording_is_rejected(self) -> None:
+        self._mutate_and_reject(
+            "app/src/main/java/com/ashishkumar/nivara/data/vault/DefaultVaultRecoveryRepository.kt",
+            "recoveryThrottle.recordAuthenticationFailure()",
+            "Unit",
+        )
+
     def test_recovery_record_rotation_is_rejected(self) -> None:
         self._mutate_and_reject(
             "app/src/main/java/com/ashishkumar/nivara/data/vault/SafVaultStorage.kt",

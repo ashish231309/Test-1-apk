@@ -1,6 +1,6 @@
-# Stage 18 architecture audit
+# Historical vault recovery architecture assessment
 
-**Scope:** completed Stages 13–17, the Stage 2 crypto history and source, current vault/storage contracts, persistence/lifecycle boundaries, and the recovery claims in the current documentation. This audit records what exists before adopting a Stage 18 recovery design. The Stage 18 requirements do not authorize changing the existing content-key hierarchy or encrypted-content formats.
+**Status:** This document preserves the pre-recovery assessment and design rationale. It is not the current implementation status; see the [vault guide](README.md) and [recovery flow reference](stage18.md) for current behavior. The assessment records the base vault and crypto boundaries that were inspected before recovery was implemented. Recovery subsequently reused existing wrapping/AES-GCM primitives in a distinct optional sidecar and retained the existing content-key hierarchy and encrypted-content formats.
 
 ## Findings by boundary
 
@@ -39,7 +39,7 @@
 - The primary PIN/password/pattern and its KDF metadata, salt, wrapped verifier, and deterministic attempt-throttle state are held in the app's credential DataStore. Recovery must neither export nor reset/replace this data and must not reproduce the old credential.
 - Biometric enrollment/invalidated state and its independent attempt throttle are local installation state backed by DataStore and the platform biometric/Keystore integration. Biometrics are optional and cannot serve as a recovery factor. A reinstall/new installation must enroll biometrics again if desired.
 - `DefaultSessionManager` is process-memory only, uses an absolute timeout, and is established only through the ordinary primary or biometric authentication paths. Quick Lock and timeout clear it. Vault initialization and normal sensitive UI actions require the existing session gate. Recovery must not create a `SessionManager` session, bypass the primary credential, or persist session state.
-- Stage 18 recovery material is intentionally a 256-bit random artifact, not a human-derived phrase/PIN/password. A bounded parser/checksum is for input error detection; the checksum is not authentication. The existing AES-GCM envelope authentication (128-bit tag) verifies a guess. Exhaustive guessing is infeasible for the specified 256-bit random key, so a guess throttle is not a substitute for or requirement of this design; malformed input and provider access are still bounded and deterministic.
+- Recovery material is a 256-bit random artifact, not a human-derived phrase/PIN/password. A bounded parser/checksum is for input error detection; the checksum is not authentication. The AES-GCM envelope tag verifies a candidate. The final implementation additionally serializes recovery attempts and applies a process-memory-only exponential retry delay (one second to a 30-second cap) after failed envelope authentication; malformed input and provider errors remain typed and bounded. This defense-in-depth state is not persisted and resets after process recreation.
 
 ### Vault UI and app lifecycle
 

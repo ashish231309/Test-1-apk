@@ -28,7 +28,7 @@ enum class HiddenApplicationUpdateResult {
     UNAVAILABLE,
 }
 
-/** One authoritative owner for persisted Stage 10 hidden state and the future Stage 11 contract. */
+/** The single authority for persisted hidden-app state used by management and launcher consumers. */
 interface HiddenApplicationRepository {
     suspend fun getHiddenApplications(): HiddenApplicationsSnapshot
     suspend fun hide(application: HiddenApplication): HiddenApplicationUpdateResult

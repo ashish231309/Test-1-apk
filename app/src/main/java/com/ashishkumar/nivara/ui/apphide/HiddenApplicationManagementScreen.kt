@@ -93,7 +93,7 @@ fun HiddenApplicationManagementScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(NivaraSpacing.medium)) {
                     NivaraPageHeader(
                         title = "Hidden applications",
-                        supportingText = "Manage which apps Nivara's planned launcher will omit. This stores a Nivara preference only; it does not hide apps from Android or other launchers.",
+                        supportingText = "Manage which apps Nivara's launcher will omit. This stores a Nivara preference only; it does not hide apps from Android or other launchers.",
                     )
                     OutlinedButton(onClick = onBack) { Text("Back") }
                 }
