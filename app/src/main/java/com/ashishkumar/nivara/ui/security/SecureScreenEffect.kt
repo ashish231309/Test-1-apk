@@ -1,17 +1,16 @@
 package com.ashishkumar.nivara.ui.security
 
-import android.app.Activity
 import android.view.Window
 import android.view.WindowManager
+import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalContext
 import java.util.WeakHashMap
 
 /** Keeps sensitive/session-related Compose destinations protected by FLAG_SECURE while they are composed. */
 @Composable
 fun SecureScreenEffect() {
-    val activity = LocalContext.current as? Activity
+    val activity = LocalActivity.current
     DisposableEffect(activity) {
         val window = activity?.window
         if (window != null) acquireSecureWindow(window)
