@@ -225,10 +225,11 @@ class DefaultVaultRecoveryRepositoryTest {
             reconnectFailure?.let { return RecoveryReconnectKeyResult.Failed(it) }
             return when (validateExistingRecords()) {
                 ExistingVaultRecordsValidation.VALID -> RecoveryReconnectKeyResult.Reconnected
-            ExistingVaultRecordsValidation.DAMAGED -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.RECORDS_DAMAGED)
-            ExistingVaultRecordsValidation.UNSUPPORTED -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
-            ExistingVaultRecordsValidation.ACCESS_DENIED -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.ACCESS_DENIED)
-            ExistingVaultRecordsValidation.UNAVAILABLE -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNAVAILABLE)
+                ExistingVaultRecordsValidation.DAMAGED -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.RECORDS_DAMAGED)
+                ExistingVaultRecordsValidation.UNSUPPORTED -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNSUPPORTED)
+                ExistingVaultRecordsValidation.ACCESS_DENIED -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.ACCESS_DENIED)
+                ExistingVaultRecordsValidation.UNAVAILABLE -> RecoveryReconnectKeyResult.Failed(RecoveryCryptographyFailure.UNAVAILABLE)
+            }
         }
     }
 
